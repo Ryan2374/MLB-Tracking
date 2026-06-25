@@ -1,0 +1,59 @@
+{
+  "frame_width": 1920,
+  "frame_height": 1080,
+  "coordinate_space": "full_frame_pixels",
+  "origin": "top_left",
+  "x_direction": "right",
+  "y_direction": "down",
+  "pitch_id": "synthetic_029",
+  "video": null,
+  "fps": 60.0,
+  "release_frame": 100,
+  "early_points": [
+    {
+      "frame": 101,
+      "x": 409.899,
+      "y": 187.648
+    },
+    {
+      "frame": 102,
+      "x": 418.19,
+      "y": 195.597
+    },
+    {
+      "frame": 103,
+      "x": 426.484,
+      "y": 203.714
+    },
+    {
+      "frame": 104,
+      "x": 434.852,
+      "y": 212.083
+    },
+    {
+      "frame": 105,
+      "x": 443.24,
+      "y": 220.665
+    },
+    {
+      "frame": 106,
+      "x": 451.581,
+      "y": 229.344
+    },
+    {
+      "frame": 107,
+      "x": 460.008,
+      "y": 238.316
+    },
+    {
+      "frame": 108,
+      "x": 468.514,
+      "y": 247.376
+    }
+  ],
+  "target": {
+    "cross_frame": 126,
+    "cross_x": 625.778,
+    "cross_y": 444.033
+  }
+}
