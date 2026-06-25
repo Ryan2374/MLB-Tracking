@@ -87,6 +87,10 @@ class LabelState:
                 "cross_x": None,
                 "cross_y": None,
             },
+            "pitch_type": None,
+            "zone_result": None,
+            "location_bucket": None,
+            "notes": "",
         }
 
     def add_click(self, x: int, y: int) -> None:
@@ -120,7 +124,105 @@ class LabelState:
         target = self.data["target"]
         return target.get("cross_x") is not None and target.get("cross_y") is not None
 
-    def save(self) -> None:
+    @classmethod
+    def from_existing(
+        cls,
+        video_path: Path,
+        out_path: Path,
+        fps: float,
+        frame_width: int,
+        frame_height: int,
+        existing: dict[str, Any],
+    ) -> LabelState:
+        state = cls(video_path, out_path, fps, frame_width, frame_height)
+        state.data = existing
+        state.data.setdefault("early_points", [])
+        state.data.setdefault(
+            "target",
+            {"cross_frame": None, "cross_x": None, "cross_y": None},
+        )
+        state.data.setdefault("pitch_type", None)
+        state.data.setdefault("zone_result", None)
+        state.data.setdefault("location_bucket", None)
+        state.data.setdefault("notes", "")
+        state.data["video"] = str(video_path)
+        state.data["frame_width"] = frame_width
+        state.data["frame_height"] = frame_height
+        if fps > 0:
+            state.data["fps"] = fps
+        release = state.data.get("release_frame")
+        if release is not None:
+            state.frame_idx = int(release)
+        elif state.data["early_points"]:
+            state.frame_idx = int(state.data["early_points"][0]["frame"])
+        return state
+
+    def apply_metadata(
+        self,
+        pitch_type: Optional[str],
+        zone_result: Optional[str],
+        location_bucket: Optional[str],
+        notes: str,
+    ) -> None:
+        if pitch_type is not None:
+            self.data["pitch_type"] = pitch_type
+        if zone_result is not None:
+            self.data["zone_result"] = zone_result
+        if location_bucket is not None:
+            self.data["location_bucket"] = location_bucket
+        if notes:
+            self.data["notes"] = notes
+
+    def validation_warnings(self, min_points: int = 5) -> list[str]:
+        warnings: list[str] = []
+        release = self.data.get("release_frame")
+        target = self.data["target"]
+        w = int(self.data.get("frame_width") or self.frame_width or 0)
+        h = int(self.data.get("frame_height") or self.frame_height or 0)
+
+        if release is None:
+            warnings.append("release_frame is not set")
+
+        if len(self.data["early_points"]) < min_points:
+            warnings.append(
+                f"only {len(self.data['early_points'])} early points; need at least {min_points}"
+            )
+
+        if target.get("cross_x") is None or target.get("cross_y") is None:
+            warnings.append("target crossing point is not set")
+
+        if target.get("cross_frame") is None:
+            warnings.append("target cross_frame is not set")
+
+        if release is not None:
+            for idx, point in enumerate(self.data["early_points"], start=1):
+                frame = int(point["frame"])
+                if frame <= release:
+                    warnings.append(f"early point {idx} frame {frame} is not after release_frame {release}")
+
+        cross_frame = target.get("cross_frame")
+        if release is not None and cross_frame is not None and int(cross_frame) <= release:
+            warnings.append(f"cross_frame {cross_frame} is not after release_frame {release}")
+
+        if w > 0 and h > 0:
+            for idx, point in enumerate(self.data["early_points"], start=1):
+                x, y = float(point["x"]), float(point["y"])
+                if x < 0 or y < 0 or x >= w or y >= h:
+                    warnings.append(f"early point {idx} ({x:.1f}, {y:.1f}) is outside frame bounds ({w}x{h})")
+            if target.get("cross_x") is not None and target.get("cross_y") is not None:
+                cx, cy = float(target["cross_x"]), float(target["cross_y"])
+                if cx < 0 or cy < 0 or cx >= w or cy >= h:
+                    warnings.append(f"target ({cx:.1f}, {cy:.1f}) is outside frame bounds ({w}x{h})")
+
+        return warnings
+
+    def save(self, min_points: int = 5) -> None:
+        warnings = self.validation_warnings(min_points=min_points)
+        if warnings:
+            print("WARNING: label may be incomplete:")
+            for warning in warnings:
+                print(f" - {warning}")
+
         self.out_path.parent.mkdir(parents=True, exist_ok=True)
         with self.out_path.open("w", encoding="utf-8") as f:
             json.dump(self.data, f, indent=2)
@@ -287,6 +389,11 @@ def main() -> None:
     parser.add_argument("--out", required=True, help="Output label JSON path")
     parser.add_argument("--zone", help="Optional JSON file with strike-zone rectangle")
     parser.add_argument("--grid", action="store_true", help="Show grid overlay on launch (default: hidden)")
+    parser.add_argument("--min-points", type=int, default=5, help="Minimum early points for save warnings")
+    parser.add_argument("--pitch-type", help="Pitch metadata, e.g. fastball")
+    parser.add_argument("--zone-result", help="Pitch metadata, e.g. strike")
+    parser.add_argument("--location-bucket", help="Pitch metadata, e.g. high_inside")
+    parser.add_argument("--notes", default="", help="Freeform notes for this pitch")
     args = parser.parse_args()
 
     video_path = Path(args.video)
@@ -300,13 +407,28 @@ def main() -> None:
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
 
-    state = LabelState(
-        video_path=video_path,
-        out_path=out_path,
-        fps=fps,
-        frame_width=frame_width,
-        frame_height=frame_height,
-    )
+    if out_path.exists():
+        with out_path.open("r", encoding="utf-8") as f:
+            existing = json.load(f)
+        state = LabelState.from_existing(
+            video_path=video_path,
+            out_path=out_path,
+            fps=fps,
+            frame_width=frame_width,
+            frame_height=frame_height,
+            existing=existing,
+        )
+        print(f"Loaded existing label from {out_path}")
+    else:
+        state = LabelState(
+            video_path=video_path,
+            out_path=out_path,
+            fps=fps,
+            frame_width=frame_width,
+            frame_height=frame_height,
+        )
+
+    state.apply_metadata(args.pitch_type, args.zone_result, args.location_bucket, args.notes)
     if args.grid:
         state.show_grid = True
 
@@ -407,7 +529,7 @@ def main() -> None:
         elif key == ord("c"):
             state.show_coords = not state.show_coords
         elif key == ord("s"):
-            state.save()
+            state.save(min_points=args.min_points)
         elif key == ord("h"):
             state.show_help = not state.show_help
 

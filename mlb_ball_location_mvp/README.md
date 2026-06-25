@@ -62,10 +62,11 @@ pip install -r requirements.txt
 ```bash
 python scripts/make_synthetic_dataset.py --out data/labels/synthetic --count 40
 python prediction/predict_location.py --labels data/labels/synthetic --n-points 5 --method velocity --use-actual-cross-frame --out data/predictions/synthetic_velocity.json
+python prediction/predict_location.py --labels data/labels/synthetic --n-points 5 --method velocity --poly-degree 2 --use-actual-cross-frame --out data/predictions/synthetic_velocity_quad.json
 python prediction/predict_location.py --labels data/labels/synthetic --n-points 5 --method ridge --out data/predictions/synthetic_ridge.json
 ```
 
-You should see per-pitch pixel errors plus summary metrics. The velocity smoke test uses the labeled `cross_frame`; that verifies the trajectory math. Later, remove `--use-actual-cross-frame` to test the harder live-style timing estimate.
+You should see per-pitch pixel errors plus summary metrics. The velocity smoke test uses the labeled `cross_frame`; that verifies the trajectory math. **Default `--poly-degree` is 1 (linear)**, which is more stable on noisy manual clicks than quadratic. Later, remove `--use-actual-cross-frame` to test the harder live-style timing estimate.
 
 ## Step 2: Record pitch clips
 
@@ -75,13 +76,28 @@ Use your capture-card device index if available. Device `0` is just the default 
 python capture/record_clip.py --device 0 --out data/raw/pitch_001.mp4 --seconds 8
 ```
 
+This also writes timing sidecars next to the clip:
+
+```text
+data/raw/pitch_001.mp4
+data/raw/pitch_001.frames.jsonl
+data/raw/pitch_001.meta.json
+```
+
 You can also use OBS or your capture software. Just place clips in `data/raw/`.
 
 ## Step 3: Label one pitch
 
 ```bash
-python labeling/manual_label_pitch.py --video data/raw/pitch_001.mp4 --out data/labels/pitch_001.json
+python labeling/manual_label_pitch.py \
+  --video data/raw/pitch_001.mp4 \
+  --out data/labels/pitch_001.json \
+  --pitch-type fastball \
+  --zone-result strike \
+  --location-bucket middle
 ```
+
+If `data/labels/pitch_001.json` already exists, the labeler **loads and resumes** it so you can fix earlier clicks. Pressing `s` saves progress and prints **validation warnings** for incomplete labels (missing release frame, too few early points, bad frame order, out-of-bounds coordinates). Saving is never blocked.
 
 Controls:
 
@@ -157,7 +173,11 @@ PCI/stick calibration is a separate later step (screen pixel → controller stic
     "cross_frame": 154,
     "cross_x": 560.0,
     "cross_y": 412.0
-  }
+  },
+  "pitch_type": "fastball",
+  "zone_result": "strike",
+  "location_bucket": "middle",
+  "notes": ""
 }
 ```
 
@@ -183,7 +203,13 @@ Optional later fields:
 Once you have at least a few labels:
 
 ```bash
-python prediction/predict_location.py --labels data/labels --n-points 5 --method velocity --out data/predictions/eval_velocity.json
+python prediction/predict_location.py --labels data/labels --n-points 5 --method velocity --poly-degree 1 --out data/predictions/eval_velocity.json
+```
+
+Compare linear vs quadratic on real labels:
+
+```bash
+python prediction/predict_location.py --labels data/labels --n-points 5 --method velocity --poly-degree 2 --out data/predictions/eval_velocity_quad.json
 ```
 
 When you have 20+ labels, try ridge regression:

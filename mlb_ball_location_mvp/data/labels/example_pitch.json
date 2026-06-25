@@ -20,5 +20,9 @@
     "cross_frame": 121,
     "cross_x": 600.0,
     "cross_y": 360.0
-  }
+  },
+  "pitch_type": "fastball",
+  "zone_result": "strike",
+  "location_bucket": "middle",
+  "notes": ""
 }
