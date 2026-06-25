@@ -93,7 +93,7 @@ e         early-point mode
 t         target-crossing mode
 left click add an early ball point or target point, depending on mode
 u         undo last early point, or clear target in target mode
-g         toggle grid overlay (25 px / 100 px spacing)
+g         toggle grid overlay (hidden by default; 25 px / 100 px spacing)
 z         toggle strike-zone box (if zone is in the label)
 c         toggle mouse coordinate readout
 s         save JSON

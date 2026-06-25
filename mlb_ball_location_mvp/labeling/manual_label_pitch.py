@@ -28,6 +28,13 @@ import cv2
 from coords.calibration import draw_grid, draw_zone, full_frame_metadata, zone_dict_or_none
 
 
+CROSSHAIR_HALF = 14
+MOUSE_HUD_X = 16
+MOUSE_HUD_Y = 28 + 6 * 24
+MOUSE_HUD_W = 300
+MOUSE_HUD_H = 26
+
+
 HELP_LINES = [
     "Controls:",
     "n/p: next/prev frame",
@@ -37,7 +44,7 @@ HELP_LINES = [
     "t: target-crossing mode",
     "left click: add point for current mode",
     "u: undo early point or clear target",
-    "g: toggle grid overlay",
+    "g: toggle grid overlay (off by default)",
     "z: toggle strike-zone box",
     "c: toggle coordinate readout",
     "s: save label",
@@ -62,11 +69,12 @@ class LabelState:
         self.mode = "early"
         self.frame_idx = 0
         self.show_help = True
-        self.show_grid = True
+        self.show_grid = False
         self.show_zone = True
         self.show_coords = True
         self.mouse_x: Optional[int] = None
         self.mouse_y: Optional[int] = None
+        self.needs_redraw = True
         self.data: dict[str, Any] = {
             **full_frame_metadata(frame_width, frame_height),
             "pitch_id": video_path.stem,
@@ -125,12 +133,32 @@ def draw_text(img, text: str, x: int, y: int, scale: float = 0.55, thickness: in
     cv2.putText(img, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), thickness, cv2.LINE_AA)
 
 
-def render_overlay(frame, state: LabelState):
+def base_overlay_key(state: LabelState) -> tuple[Any, ...]:
+    target = state.data["target"]
+    zone = state.data.get("zone") or {}
+    points = state.data["early_points"]
+    return (
+        state.frame_idx,
+        state.show_grid,
+        state.show_zone,
+        state.show_help,
+        state.mode,
+        state.data.get("release_frame"),
+        tuple((int(p["frame"]), float(p["x"]), float(p["y"])) for p in points),
+        target.get("cross_frame"),
+        target.get("cross_x"),
+        target.get("cross_y"),
+        tuple(sorted(zone.items())),
+    )
+
+
+def render_base_overlay(frame, state: LabelState):
+    """Draw static overlay elements; cache this layer between mouse moves."""
     img = frame.copy()
     h, w = img.shape[:2]
 
     if state.show_grid:
-        draw_grid(img)
+        draw_grid(img, fast=True)
 
     zone = zone_dict_or_none(state.data.get("zone"))
     if state.show_zone and zone is not None:
@@ -161,13 +189,12 @@ def render_overlay(frame, state: LabelState):
         f"Target: {target_status}",
         f"release_frame: {release}",
         f"cross_frame: {target_frame}",
+        "",  # reserved for live mouse readout
+        f"space: {state.data.get('coordinate_space')} ({w}x{h})",
     ]
-    if state.show_coords and state.mouse_x is not None and state.mouse_y is not None:
-        top.append(f"Mouse: x={state.mouse_x}, y={state.mouse_y}")
-    top.append(f"space: {state.data.get('coordinate_space')} ({w}x{h})")
-
     for i, line in enumerate(top):
-        draw_text(img, line, 16, 28 + i * 24)
+        if line:
+            draw_text(img, line, 16, 28 + i * 24)
 
     if state.show_help:
         y0 = max(220, h - 280)
@@ -175,6 +202,75 @@ def render_overlay(frame, state: LabelState):
             draw_text(img, line, 16, y0 + i * 22, scale=0.48)
 
     return img
+
+
+def restore_mouse_hud(display, base) -> None:
+    y0 = MOUSE_HUD_Y - 18
+    y1 = y0 + MOUSE_HUD_H
+    x1 = MOUSE_HUD_X + MOUSE_HUD_W
+    display[y0:y1, MOUSE_HUD_X:x1] = base[y0:y1, MOUSE_HUD_X:x1]
+
+
+def erase_crosshair(display, base, mx: int, my: int) -> None:
+    h, w = display.shape[:2]
+    half = CROSSHAIR_HALF
+    x0, x1 = max(0, mx - half), min(w, mx + half + 1)
+    display[max(0, my - 1) : min(h, my + 2), x0:x1] = base[max(0, my - 1) : min(h, my + 2), x0:x1]
+    y0, y1 = max(0, my - half), min(h, my + half + 1)
+    display[y0:y1, max(0, mx - 1) : min(w, mx + 2)] = base[y0:y1, max(0, mx - 1) : min(w, mx + 2)]
+
+
+def draw_crosshair(display, mx: int, my: int) -> None:
+    half = CROSSHAIR_HALF
+    color = (0, 255, 255)
+    cv2.line(display, (mx - half, my), (mx + half, my), color, 1, cv2.LINE_8)
+    cv2.line(display, (mx, my - half), (mx, my + half), color, 1, cv2.LINE_8)
+
+
+def draw_mouse_hud(display, mx: int, my: int) -> None:
+    cv2.putText(
+        display,
+        f"Mouse: x={mx}, y={my}",
+        (MOUSE_HUD_X, MOUSE_HUD_Y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (255, 255, 255),
+        1,
+        cv2.LINE_8,
+    )
+
+
+def reset_display_from_base(base, state: LabelState):
+    """One full copy when the static overlay changes."""
+    display = base.copy()
+    if state.show_coords and state.mouse_x is not None and state.mouse_y is not None:
+        draw_crosshair(display, state.mouse_x, state.mouse_y)
+        draw_mouse_hud(display, state.mouse_x, state.mouse_y)
+    return display
+
+
+def update_mouse_on_display(display, base, state: LabelState, last_mx: Optional[int], last_my: Optional[int]) -> None:
+    """Patch only crosshair + HUD regions instead of copying the full frame."""
+    if last_mx is not None and last_my is not None:
+        erase_crosshair(display, base, last_mx, last_my)
+    restore_mouse_hud(display, base)
+
+    if state.show_coords and state.mouse_x is not None and state.mouse_y is not None:
+        draw_crosshair(display, state.mouse_x, state.mouse_y)
+        draw_mouse_hud(display, state.mouse_x, state.mouse_y)
+
+
+def render_mouse_overlay(base, state: LabelState):
+    """Fallback full redraw (tests / one-off renders)."""
+    display = base.copy()
+    if state.show_coords and state.mouse_x is not None and state.mouse_y is not None:
+        draw_crosshair(display, state.mouse_x, state.mouse_y)
+        draw_mouse_hud(display, state.mouse_x, state.mouse_y)
+    return display
+
+
+def render_overlay(frame, state: LabelState):
+    return render_mouse_overlay(render_base_overlay(frame, state), state)
 
 
 def seek_frame(cap: cv2.VideoCapture, frame_idx: int):
@@ -190,6 +286,7 @@ def main() -> None:
     parser.add_argument("--video", required=True, help="Pitch video path")
     parser.add_argument("--out", required=True, help="Output label JSON path")
     parser.add_argument("--zone", help="Optional JSON file with strike-zone rectangle")
+    parser.add_argument("--grid", action="store_true", help="Show grid overlay on launch (default: hidden)")
     args = parser.parse_args()
 
     video_path = Path(args.video)
@@ -210,6 +307,8 @@ def main() -> None:
         frame_width=frame_width,
         frame_height=frame_height,
     )
+    if args.grid:
+        state.show_grid = True
 
     if args.zone:
         with Path(args.zone).open("r", encoding="utf-8") as f:
@@ -224,22 +323,64 @@ def main() -> None:
     def on_mouse(event, x, y, flags, userdata):  # noqa: ANN001, ARG001
         state.mouse_x = int(x)
         state.mouse_y = int(y)
+        if event in (cv2.EVENT_MOUSEMOVE, cv2.EVENT_LBUTTONDOWN):
+            state.needs_redraw = True
         if event == cv2.EVENT_LBUTTONDOWN:
             state.add_click(x, y)
 
     cv2.setMouseCallback(window, on_mouse)
 
-    while True:
-        frame = seek_frame(cap, state.frame_idx)
-        if frame is None:
-            state.frame_idx = max(0, min(state.frame_idx, frame_count - 1))
-            frame = seek_frame(cap, state.frame_idx)
-            if frame is None:
-                break
+    cached_frame_idx = -1
+    cached_frame = None
+    cached_base_key: Optional[tuple[Any, ...]] = None
+    cached_base = None
+    display_img = None
+    last_drawn_mouse: tuple[Optional[int], Optional[int]] = (None, None)
 
-        img = render_overlay(frame, state)
-        cv2.imshow(window, img)
-        key = cv2.waitKey(0) & 0xFF
+    while True:
+        if state.frame_idx != cached_frame_idx:
+            cached_frame = seek_frame(cap, state.frame_idx)
+            if cached_frame is None:
+                state.frame_idx = max(0, min(state.frame_idx, frame_count - 1))
+                cached_frame = seek_frame(cap, state.frame_idx)
+                if cached_frame is None:
+                    break
+            cached_frame_idx = state.frame_idx
+            cached_base_key = None
+            state.needs_redraw = True
+
+        base_rebuilt = False
+        base_key = base_overlay_key(state)
+        if base_key != cached_base_key:
+            cached_base = render_base_overlay(cached_frame, state)
+            cached_base_key = base_key
+            display_img = reset_display_from_base(cached_base, state)
+            last_drawn_mouse = (
+                (state.mouse_x, state.mouse_y)
+                if state.show_coords and state.mouse_x is not None
+                else (None, None)
+            )
+            base_rebuilt = True
+            state.needs_redraw = True
+
+        if state.needs_redraw and display_img is not None and cached_base is not None:
+            if not base_rebuilt:
+                update_mouse_on_display(
+                    display_img,
+                    cached_base,
+                    state,
+                    last_drawn_mouse[0],
+                    last_drawn_mouse[1],
+                )
+            last_drawn_mouse = (state.mouse_x, state.mouse_y)
+            cv2.imshow(window, display_img)
+            state.needs_redraw = False
+
+        key = cv2.waitKey(1)
+        if key == -1:
+            continue
+        key &= 0xFF
+        state.needs_redraw = True
 
         if key == ord("q"):
             break
