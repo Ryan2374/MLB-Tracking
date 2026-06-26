@@ -62,10 +62,11 @@ pip install -r requirements.txt
 ```bash
 python scripts/make_synthetic_dataset.py --out data/labels/synthetic --count 40
 python prediction/predict_location.py --labels data/labels/synthetic --n-points 5 --method velocity --use-actual-cross-frame --out data/predictions/synthetic_velocity.json
+python prediction/predict_location.py --labels data/labels/synthetic --n-points 5 --method velocity --poly-degree 2 --use-actual-cross-frame --out data/predictions/synthetic_velocity_quad.json
 python prediction/predict_location.py --labels data/labels/synthetic --n-points 5 --method ridge --out data/predictions/synthetic_ridge.json
 ```
 
-You should see per-pitch pixel errors plus summary metrics. The velocity smoke test uses the labeled `cross_frame`; that verifies the trajectory math. Later, remove `--use-actual-cross-frame` to test the harder live-style timing estimate.
+You should see per-pitch pixel errors plus summary metrics. The velocity smoke test uses the labeled `cross_frame`; that verifies the trajectory math. **Default `--poly-degree` is 1 (linear)**, which is more stable on noisy manual clicks than quadratic. Later, remove `--use-actual-cross-frame` to test the harder live-style timing estimate.
 
 ## Step 2: Record pitch clips
 
@@ -75,12 +76,42 @@ Use your capture-card device index if available. Device `0` is just the default 
 python capture/record_clip.py --device 0 --out data/raw/pitch_001.mp4 --seconds 8
 ```
 
+This also writes timing sidecars next to the clip:
+
+```text
+data/raw/pitch_001.mp4
+data/raw/pitch_001.frames.jsonl
+data/raw/pitch_001.meta.json
+```
+
+The recorder warms up the device, measures actual capture FPS, and writes the MP4 at that rate so **encoded frame count matches the sidecar**. Check `frames_in_sync` in `.meta.json`. Sidecars store **exact wall-clock timestamps** (`timing_source: capture_sidecar`).
+
+For clips recorded before sidecars existed, backfill approximate timing:
+
+```bash
+python scripts/backfill_timing_sidecars.py --raw-dir data/raw
+python scripts/verify_timing_sidecars.py --raw-dir data/raw --enrich-labels
+```
+
+Backfilled timing uses uniform `frame/fps` spacing (`backfill_uniform_fps`) — good for ms fields in labels, but **new pitches should use `record_clip.py`** for exact capture timing.
+
+For interactive capture (press `r` to clip, `q` to quit):
+
+```bash
+python capture/record_clip.py --device 0 --preview-only --clip-seconds 6
+```
+
 You can also use OBS or your capture software. Just place clips in `data/raw/`.
 
 ## Step 3: Label one pitch
 
 ```bash
-python labeling/manual_label_pitch.py --video data/raw/pitch_001.mp4 --out data/labels/pitch_001.json
+python labeling/manual_label_pitch.py \
+  --video data/raw/pitch_001.mp4 \
+  --out data/labels/pitch_001.json \
+  --pitch-type fastball \
+  --zone-result strike \
+  --location-bucket middle
 ```
 
 ### What to label per pitch
@@ -94,6 +125,39 @@ pitch_type             fastball, slider, curveball, etc.
 zone_result            strike, borderline, ball, unknown
 location_bucket        middle, high, low, inside, outside, etc.
 quality + notes        confidence, estimated crossing, anything odd
+```
+
+If `data/labels/pitch_001.json` already exists, the labeler **loads and resumes** it so you can fix earlier clicks. Pressing `s` saves progress and prints **validation warnings** for incomplete labels (missing release frame, too few early points, bad frame order, out-of-bounds coordinates). Saving is never blocked.
+
+**Keep the label window at native resolution** while clicking — resizing can skew coordinates.
+
+In **early-point mode (e)**, ball markers show on the **current frame only** so past clicks do not hide the ball. Press **t** to review the full path in target mode. On save, labels include a `timing` block plus `timestamp_ms` on each ball point when a sidecar exists:
+
+```json
+"timing": {
+  "source": "capture_sidecar",
+  "release_timestamp_ms": 3456.789,
+  "cross_timestamp_ms": 4222.456,
+  "release_to_cross_ms": 765.667
+}
+```
+
+Controls:
+
+```text
+n / p     next / previous frame
+j / k     jump forward / backward 10 frames
+r         set release_frame to current frame
+e         early-point mode
+t         target-crossing mode
+left click add an early ball point or target point, depending on mode
+u         undo last early point, or clear target in target mode
+g         toggle grid overlay (hidden by default; 25 px / 100 px spacing)
+z         toggle strike-zone box (if zone is in the label)
+c         toggle mouse coordinate readout
+s         save JSON
+h         toggle help
+q         quit
 ```
 
 On GOAT (~10 frames release to plate), click **every visible ball frame** after release.
@@ -191,11 +255,14 @@ PCI/stick calibration is a separate later step (screen pixel → controller stic
     "cross_x": 558.0,
     "cross_y": 412.0
   },
+  "pitch_type": "fastball",
+  "zone_result": "strike",
+  "location_bucket": "middle",
   "quality": {
     "ball_visible": true,
     "crossing_estimated": false,
     "label_confidence": "high"
-  },
+  }
   "notes": ""
 }
 ```
@@ -221,12 +288,21 @@ Optional later fields:
 
 ## Step 4: Evaluate labeled pitches
 
+`--labels data/labels` loads real pitch JSON files only — it **ignores** `example_*.json` (schema sample lives in `data/examples/`).
+
 Once you have at least a few labels, sweep how early you can predict:
 
 ```bash
 python prediction/predict_location.py --labels data/labels --n-points 3 --method velocity --out data/predictions/eval_n3.json
 python prediction/predict_location.py --labels data/labels --n-points 5 --method velocity --out data/predictions/eval_n5.json
 python prediction/predict_location.py --labels data/labels --n-points 7 --method velocity --out data/predictions/eval_n7.json
+python prediction/predict_location.py --labels data/labels --n-points 5 --method velocity --poly-degree 1 --out data/predictions/eval_velocity.json
+```
+
+Compare linear vs quadratic on real labels:
+
+```bash
+python prediction/predict_location.py --labels data/labels --n-points 5 --method velocity --poly-degree 2 --out data/predictions/eval_velocity_quad.json
 ```
 
 When you have 20+ labels, try ridge regression:

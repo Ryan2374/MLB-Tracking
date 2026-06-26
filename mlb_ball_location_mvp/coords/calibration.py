@@ -66,18 +66,20 @@ def draw_grid(
     *,
     small_spacing: int = SMALL_GRID_PX,
     large_spacing: int = LARGE_GRID_PX,
+    fast: bool = False,
 ) -> None:
     """Draw optional debug grid lines over the image (in-place)."""
     height, width = img.shape[:2]
     small_color = (48, 48, 48)
     large_color = (72, 72, 72)
+    line_type = cv2.LINE_8 if fast else cv2.LINE_AA
 
     for x in range(0, width, small_spacing):
         color = large_color if x % large_spacing == 0 else small_color
-        cv2.line(img, (x, 0), (x, height - 1), color, 1, cv2.LINE_AA)
+        cv2.line(img, (x, 0), (x, height - 1), color, 1, line_type)
     for y in range(0, height, small_spacing):
         color = large_color if y % large_spacing == 0 else small_color
-        cv2.line(img, (0, y), (width - 1, y), color, 1, cv2.LINE_AA)
+        cv2.line(img, (0, y), (width - 1, y), color, 1, line_type)
 
 
 def draw_zone(img: np.ndarray, zone: dict[str, float], *, color: tuple[int, int, int] = (255, 128, 0)) -> None:

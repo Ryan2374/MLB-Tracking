@@ -101,8 +101,15 @@ def load_label(path: Path) -> PitchLabel:
 
 def iter_label_paths(labels_dir: Path) -> list[Path]:
     paths = sorted(p for p in labels_dir.rglob("*.json") if p.is_file())
-    # Ignore prediction/evaluation JSON files accidentally placed nearby.
-    return [p for p in paths if not p.name.endswith("_prediction.json") and not p.name.endswith("_eval.json")]
+    # Ignore prediction/evaluation JSON and schema examples accidentally placed nearby.
+    return [
+        p
+        for p in paths
+        if not p.name.endswith("_prediction.json")
+        and not p.name.endswith("_eval.json")
+        and not p.name.startswith("example_")
+        and not p.name.startswith("eval_")
+    ]
 
 
 def load_labels(labels_dir: Path) -> list[PitchLabel]:
@@ -141,7 +148,11 @@ def median_time_to_cross(labels: Iterable[PitchLabel]) -> Optional[float]:
     return float(statistics.median(values))
 
 
-def fit_poly_predict(points: tuple[Point, ...], future_frame: float) -> tuple[float, float, dict]:
+def fit_poly_predict(
+    points: tuple[Point, ...],
+    future_frame: float,
+    degree: int = 1,
+) -> tuple[float, float, dict]:
     """Fit x(frame) and y(frame), then predict location at future_frame."""
     frames = np.array([p.frame for p in points], dtype=float)
     xs = np.array([p.x for p in points], dtype=float)
@@ -152,8 +163,7 @@ def fit_poly_predict(points: tuple[Point, ...], future_frame: float) -> tuple[fl
     t = frames - frame0
     future_t = float(future_frame) - frame0
 
-    # Quadratic needs at least 3 points. Linear is safer for 2 points.
-    degree = min(2, len(points) - 1)
+    degree = min(int(degree), len(points) - 1)
     if degree < 1:
         raise ValueError("Need at least 2 points for trajectory extrapolation")
 
@@ -177,13 +187,18 @@ def predict_velocity(
     n_points: int,
     train_labels_for_timing: Iterable[PitchLabel] = (),
     use_actual_cross_frame: bool = False,
+    poly_degree: int = 1,
 ) -> tuple[float, float, dict]:
     points = require_points(label, n_points)
 
     future_frame: Optional[float] = None
     timing_source = "unknown"
 
-    if use_actual_cross_frame and label.target.cross_frame is not None:
+    if use_actual_cross_frame:
+        if label.target.cross_frame is None:
+            raise ValueError(
+                f"{label.pitch_id}: --use-actual-cross-frame requires target.cross_frame in the label"
+            )
         future_frame = float(label.target.cross_frame)
         timing_source = "actual_cross_frame"
     else:
@@ -191,17 +206,12 @@ def predict_velocity(
         if median_dt is not None and label.release_frame is not None:
             future_frame = float(label.release_frame + median_dt)
             timing_source = "median_train_time_to_cross"
-        elif label.target.cross_frame is not None:
-            # Fallback makes single-label smoke testing possible, but do not treat it as a fair live test.
-            future_frame = float(label.target.cross_frame)
-            timing_source = "fallback_actual_cross_frame"
         else:
-            # Last-resort rough estimate: extend by the same observed duration four more times.
             observed_span = max(1, points[-1].frame - points[0].frame)
             future_frame = float(points[-1].frame + 4 * observed_span)
             timing_source = "rough_observed_span_extrapolation"
 
-    pred_x, pred_y, details = fit_poly_predict(points, future_frame)
+    pred_x, pred_y, details = fit_poly_predict(points, future_frame, degree=poly_degree)
     details["timing_source"] = timing_source
     return pred_x, pred_y, details
 
@@ -252,6 +262,7 @@ def make_prediction(
     train_labels: list[PitchLabel],
     alpha: float,
     use_actual_cross_frame: bool,
+    poly_degree: int = 1,
 ) -> Prediction:
     if method == "velocity":
         pred_x, pred_y, details = predict_velocity(
@@ -259,6 +270,7 @@ def make_prediction(
             n_points=n_points,
             train_labels_for_timing=train_labels,
             use_actual_cross_frame=use_actual_cross_frame,
+            poly_degree=poly_degree,
         )
     elif method == "ridge":
         W = fit_ridge(train_labels, n_points=n_points, alpha=alpha)
@@ -357,6 +369,12 @@ def run_single(args: argparse.Namespace) -> dict:
     if method == "ridge":
         raise SystemExit("Single-label ridge prediction needs --labels so it has training data. Use --method velocity for one label.")
 
+    if method == "velocity" and not args.use_actual_cross_frame:
+        raise SystemExit(
+            "Single-label velocity prediction requires --use-actual-cross-frame for smoke tests, "
+            "or use --labels so timing can be estimated from training history."
+        )
+
     pred = make_prediction(
         label=label,
         method=method,
@@ -364,6 +382,7 @@ def run_single(args: argparse.Namespace) -> dict:
         train_labels=train_labels,
         alpha=args.alpha,
         use_actual_cross_frame=args.use_actual_cross_frame,
+        poly_degree=args.poly_degree,
     )
     summary = summarize([pred])
     print_predictions([pred], summary)
@@ -392,6 +411,7 @@ def run_batch(args: argparse.Namespace) -> dict:
             train_labels=train,
             alpha=args.alpha,
             use_actual_cross_frame=args.use_actual_cross_frame,
+            poly_degree=args.poly_degree,
         )
         predictions.append(pred)
 
@@ -401,6 +421,7 @@ def run_batch(args: argparse.Namespace) -> dict:
         "mode": "batch_leave_one_out",
         "method": args.method,
         "n_points": args.n_points,
+        "poly_degree": args.poly_degree,
         "predictions": [prediction_to_dict(p) for p in predictions],
         "summary": summary,
     }
@@ -418,6 +439,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--use-actual-cross-frame",
         action="store_true",
         help="Use labeled cross_frame for trajectory extrapolation. Good for smoke tests, not a fair live-style evaluation.",
+    )
+    parser.add_argument(
+        "--poly-degree",
+        type=int,
+        choices=[1, 2],
+        default=1,
+        help="Polynomial degree for --method velocity (default: 1 linear; 2 quadratic).",
     )
     parser.add_argument("--out", help="Optional output JSON path for predictions.")
     return parser

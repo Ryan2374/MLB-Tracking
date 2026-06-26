@@ -1,0 +1,75 @@
+{
+  "frame_width": 1920,
+  "frame_height": 1080,
+  "coordinate_space": "full_frame_pixels",
+  "origin": "top_left",
+  "x_direction": "right",
+  "y_direction": "down",
+  "pitch_id": "pitch_009",
+  "video": "data\\raw\\pitch_009.mp4",
+  "fps": 34.95,
+  "release_frame": 97,
+  "early_points": [
+    {
+      "frame": 98,
+      "x": 874.0,
+      "y": 390.0
+    },
+    {
+      "frame": 102,
+      "x": 883.0,
+      "y": 391.0
+    },
+    {
+      "frame": 105,
+      "x": 892.0,
+      "y": 397.0
+    },
+    {
+      "frame": 107,
+      "x": 898.0,
+      "y": 404.0
+    },
+    {
+      "frame": 108,
+      "x": 904.0,
+      "y": 411.0
+    },
+    {
+      "frame": 109,
+      "x": 910.0,
+      "y": 422.0
+    },
+    {
+      "frame": 110,
+      "x": 920.0,
+      "y": 438.0
+    },
+    {
+      "frame": 111,
+      "x": 926.0,
+      "y": 450.0
+    },
+    {
+      "frame": 112,
+      "x": 945.0,
+      "y": 488.0
+    },
+    {
+      "frame": 113,
+      "x": 979.0,
+      "y": 559.0
+    }
+  ],
+  "target": {
+    "cross_frame": 114,
+    "cross_x": 1007.0,
+    "cross_y": 622.0
+  },
+  "pitch_type": "fastball",
+  "zone_result": "strike",
+  "location_bucket": "middle",
+  "notes": "",
+  "requested_fps": 60.0,
+  "container_fps": 60.0
+}

@@ -24,6 +24,7 @@ import cv2
 import numpy as np
 
 from coords.calibration import draw_grid, draw_zone, full_frame_metadata, zone_dict_or_none
+from timing.sidecar import enrich_label_timing, load_frame_timestamps, verify_video_sidecars
 
 PITCH_TYPES = [
     "fastball",
@@ -54,13 +55,18 @@ LOCATION_BUCKETS = [
 ]
 LABEL_CONFIDENCE = ["high", "medium", "low"]
 
+CROSSHAIR_HALF = 14
+MOUSE_HUD_X = 16
+MOUSE_HUD_Y = 28 + 9 * 24
+MOUSE_HUD_W = 420
+MOUSE_HUD_H = 26
+
+
 HELP_LINES = [
-    "Workflow: r=release | e=ball points | click every visible frame | t=target | s=save",
-    "n/p or arrows: next/prev frame | j/k: +/-10 | space: play/pause | f: next gap",
-    "Ball points: click center of ball each frame (skip hidden frames)",
-    "Target: plate/strike-zone crossing, not catcher glove",
+    "Workflow: r=release | e=ball points | t=target | s=save | q=quit",
+    "n/p or arrows: next/prev | j/k: +/-10 | space: play/pause | f: next gap",
     "Metadata: [/]=pitch type | ;/'=zone | ,/.=location | m=confidence | b=est. cross | i=notes",
-    "v: all-frame markers | g: grid | z: zone box | u: undo | h: help | q: quit",
+    "v: all-frame ball markers (target mode review) | g: grid | z: zone box | u: undo | c: coords | h: help",
 ]
 
 ARROW_LEFT = {2424832, 81, 2}
@@ -82,6 +88,79 @@ def cycle_option(options: list[str], current: str, direction: int) -> str:
     return options[idx]
 
 
+def meta_sidecar_path(video_path: Path) -> Path:
+    return video_path.with_suffix(".meta.json")
+
+
+def frames_sidecar_path(video_path: Path) -> Path:
+    return video_path.with_suffix(".frames.jsonl")
+
+
+def resolve_sidecar_video(video_path: Path) -> Path:
+    candidates = [video_path.resolve(), (Path.cwd() / video_path).resolve()]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return video_path
+
+
+def format_timestamp_ms(seconds: Optional[float]) -> str:
+    if seconds is None:
+        return "n/a"
+    return f"{seconds * 1000.0:.3f} ms"
+
+
+def format_timestamp_s(seconds: Optional[float]) -> str:
+    if seconds is None:
+        return "n/a"
+    return f"{seconds:.6f} s"
+
+
+def resolve_meta_sidecar(video_path: Path) -> Optional[dict[str, Any]]:
+    candidates = [video_path, Path.cwd() / video_path]
+    seen: set[Path] = set()
+    for candidate in candidates:
+        meta_path = meta_sidecar_path(candidate.resolve() if candidate.exists() else candidate)
+        if meta_path in seen:
+            continue
+        seen.add(meta_path)
+        if not meta_path.exists():
+            continue
+        with meta_path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    return None
+
+
+def apply_recording_fps_fields(
+    data: dict[str, Any],
+    video_path: Path,
+    *,
+    container_fps: float,
+) -> Optional[float]:
+    """Prefer measured capture FPS from .meta.json over MP4 container metadata."""
+    meta = resolve_meta_sidecar(video_path)
+    if meta is not None:
+        actual = meta.get("actual_fps")
+        if actual is not None and float(actual) > 0:
+            data["fps"] = float(actual)
+            requested = meta.get("requested_fps")
+            if requested is not None and float(requested) > 0:
+                data["requested_fps"] = float(requested)
+            if container_fps > 0:
+                data["container_fps"] = float(container_fps)
+            else:
+                data.pop("container_fps", None)
+            return float(actual)
+
+    data.pop("requested_fps", None)
+    data.pop("container_fps", None)
+    if container_fps > 0:
+        data["fps"] = float(container_fps)
+        return float(container_fps)
+    data["fps"] = None
+    return None
+
+
 class LabelState:
     def __init__(
         self,
@@ -99,15 +178,18 @@ class LabelState:
         self.frame_width = frame_width
         self.frame_height = frame_height
         self.auto_step = max(0, auto_step)
+        self.min_points = 5
         self.mode = "early"
         self.frame_idx = 0
         self.show_help = True
-        self.show_grid = True
+        self.show_grid = False
         self.show_zone = True
         self.show_all_points = False
         self.show_coords = True
         self.mouse_x: Optional[int] = None
         self.mouse_y: Optional[int] = None
+        self.needs_redraw = True
+        self.frame_timestamps = load_frame_timestamps(video_path)
         self.data: dict[str, Any] = {
             **full_frame_metadata(frame_width, frame_height),
             "pitch_id": video_path.stem,
@@ -127,6 +209,33 @@ class LabelState:
             "quality": default_quality(),
             "notes": "",
         }
+        apply_recording_fps_fields(self.data, video_path, container_fps=fps)
+
+    def frame_timestamp_s(self, frame_idx: int) -> Optional[float]:
+        return self.frame_timestamps.get(int(frame_idx))
+
+    def frame_timestamp_ms(self, frame_idx: int) -> Optional[float]:
+        ts = self.frame_timestamp_s(frame_idx)
+        if ts is None:
+            return None
+        return ts * 1000.0
+
+    def delta_timestamp_ms(self, frame_idx: int, reference_frame: Optional[int]) -> Optional[float]:
+        if reference_frame is None:
+            return None
+        current = self.frame_timestamp_ms(frame_idx)
+        ref = self.frame_timestamp_ms(reference_frame)
+        if current is None or ref is None:
+            return None
+        return current - ref
+
+    def should_show_ball_marker(self, point_frame: int) -> bool:
+        """In early-point mode, only the current frame marker is shown so past clicks do not hide the ball."""
+        if self.mode == "early":
+            return int(point_frame) == int(self.frame_idx)
+        if self.show_all_points:
+            return True
+        return int(point_frame) == int(self.frame_idx)
 
     def labeled_frames(self) -> set[int]:
         return {int(p["frame"]) for p in self.data["early_points"]}
@@ -167,25 +276,46 @@ class LabelState:
             if frame not in labeled
         )
 
-    def validation_warnings(self) -> list[str]:
+    def validation_warnings(self, min_points: int = 5) -> list[str]:
         warnings: list[str] = []
         release = self.data.get("release_frame")
         points = self.data["early_points"]
         target = self.data["target"]
+        w = int(self.data.get("frame_width") or self.frame_width or 0)
+        h = int(self.data.get("frame_height") or self.frame_height or 0)
 
         if release is None:
             warnings.append("release_frame not set")
-        if len(points) < 5:
-            warnings.append(f"only {len(points)} ball points (aim for 5-10 on GOAT)")
+        if len(points) < min_points:
+            warnings.append(f"only {len(points)} early points (aim for {min_points}+ on GOAT)")
         if release is not None and points:
             first_frame = int(points[0]["frame"])
             if first_frame <= int(release):
                 warnings.append("first ball point should be after release_frame")
         if target.get("cross_x") is None or target.get("cross_y") is None:
             warnings.append("target crossing not set")
+        if target.get("cross_frame") is None:
+            warnings.append("target cross_frame is not set")
         missing = self.missing_frame_count()
         if missing > 0:
             warnings.append(f"{missing} visible frames still unlabeled before crossing")
+        if release is not None:
+            for idx, point in enumerate(points, start=1):
+                frame = int(point["frame"])
+                if frame <= int(release):
+                    warnings.append(f"early point {idx} frame {frame} is not after release_frame {release}")
+        cross_frame = target.get("cross_frame")
+        if release is not None and cross_frame is not None and int(cross_frame) <= int(release):
+            warnings.append(f"cross_frame {cross_frame} is not after release_frame {release}")
+        if w > 0 and h > 0:
+            for idx, point in enumerate(points, start=1):
+                x, y = float(point["x"]), float(point["y"])
+                if x < 0 or y < 0 or x >= w or y >= h:
+                    warnings.append(f"early point {idx} ({x:.1f}, {y:.1f}) is outside frame bounds ({w}x{h})")
+            if target.get("cross_x") is not None and target.get("cross_y") is not None:
+                cx, cy = float(target["cross_x"]), float(target["cross_y"])
+                if cx < 0 or cy < 0 or cx >= w or cy >= h:
+                    warnings.append(f"target ({cx:.1f}, {cy:.1f}) is outside frame bounds ({w}x{h})")
         return warnings
 
     def load_existing(self, path: Path) -> None:
@@ -203,10 +333,44 @@ class LabelState:
             self.data["quality"] = merged
         if "notes" not in self.data:
             self.data["notes"] = ""
+        apply_recording_fps_fields(self.data, self.video_path, container_fps=float(self.data.get("fps") or 0))
+        self.frame_timestamps = load_frame_timestamps(self.video_path)
         release = self.data.get("release_frame")
         if release is not None:
             self.frame_idx = int(release)
         print(f"Loaded existing label from {path}")
+
+    @classmethod
+    def from_existing(
+        cls,
+        video_path: Path,
+        out_path: Path,
+        fps: float,
+        frame_width: int,
+        frame_height: int,
+        existing: dict[str, Any],
+    ) -> LabelState:
+        state = cls(video_path, out_path, fps, frame_width, frame_height)
+        state.data.update(existing)
+        state.data.setdefault("early_points", [])
+        state.data.setdefault(
+            "target",
+            {"cross_frame": None, "cross_x": None, "cross_y": None},
+        )
+        state.data.setdefault("notes", "")
+        quality = state.data.get("quality")
+        if not isinstance(quality, dict):
+            state.data["quality"] = default_quality()
+        state.data["video"] = str(video_path)
+        state.data["frame_width"] = frame_width
+        state.data["frame_height"] = frame_height
+        apply_recording_fps_fields(state.data, video_path, container_fps=fps)
+        release = state.data.get("release_frame")
+        if release is not None:
+            state.frame_idx = int(release)
+        elif state.data["early_points"]:
+            state.frame_idx = int(state.data["early_points"][0]["frame"])
+        return state
 
     def add_click(self, x: int, y: int, frame_count: int) -> None:
         if self.mode == "early":
@@ -214,6 +378,9 @@ class LabelState:
             if release is not None and self.frame_idx <= int(release):
                 print("Warning: ball point should be after release_frame")
             point = {"frame": int(self.frame_idx), "x": float(x), "y": float(y)}
+            ts_ms = self.frame_timestamp_ms(self.frame_idx)
+            if ts_ms is not None:
+                point["timestamp_ms"] = round(ts_ms, 3)
             points = self.data["early_points"]
             replaced = False
             for i, existing in enumerate(points):
@@ -244,9 +411,45 @@ class LabelState:
         target = self.data["target"]
         return target.get("cross_x") is not None and target.get("cross_y") is not None
 
-    def save(self) -> None:
-        for warning in self.validation_warnings():
-            print(f"Warning: {warning}")
+    def apply_metadata(
+        self,
+        pitch_type: Optional[str],
+        zone_result: Optional[str],
+        location_bucket: Optional[str],
+        notes: str,
+    ) -> None:
+        if pitch_type is not None:
+            self.data["pitch_type"] = pitch_type
+        if zone_result is not None:
+            self.data["zone_result"] = zone_result
+        if location_bucket is not None:
+            self.data["location_bucket"] = location_bucket
+        if notes:
+            self.data["notes"] = notes
+
+    def save(self, min_points: int = 5) -> None:
+        warnings = self.validation_warnings(min_points=min_points)
+        if warnings:
+            print("WARNING: label may be incomplete:")
+            for warning in warnings:
+                print(f" - {warning}")
+
+        self.frame_timestamps = load_frame_timestamps(self.video_path)
+        enrich_label_timing(self.data, self.video_path)
+
+        timing = self.data.get("timing", {})
+        if timing.get("source") == "missing":
+            print(
+                "WARNING: no .frames.jsonl sidecar — timing is frame/fps estimate only. "
+                "Run: python scripts/backfill_timing_sidecars.py --video "
+                f"{self.video_path}"
+            )
+        elif timing.get("release_to_cross_ms") is not None:
+            print(
+                f"Timing: release→cross {timing['release_to_cross_ms']:.3f} ms "
+                f"(source={timing.get('source')})"
+            )
+
         self.out_path.parent.mkdir(parents=True, exist_ok=True)
         with self.out_path.open("w", encoding="utf-8") as f:
             json.dump(self.data, f, indent=2)
@@ -259,12 +462,34 @@ def draw_text(img, text: str, x: int, y: int, scale: float = 0.55, thickness: in
     cv2.putText(img, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), thickness, cv2.LINE_AA)
 
 
-def render_overlay(frame, state: LabelState):
+def base_overlay_key(state: LabelState) -> tuple[Any, ...]:
+    target = state.data["target"]
+    zone = state.data.get("zone") or {}
+    points = state.data["early_points"]
+    return (
+        state.frame_idx,
+        state.show_grid,
+        state.show_zone,
+        state.show_help,
+        state.mode,
+        state.data.get("release_frame"),
+        state.show_all_points,
+        tuple(sorted(state.frame_timestamps.items())[:3]),  # cache bust if sidecar reloads
+        tuple((int(p["frame"]), float(p["x"]), float(p["y"])) for p in points),
+        target.get("cross_frame"),
+        target.get("cross_x"),
+        target.get("cross_y"),
+        tuple(sorted(zone.items())),
+    )
+
+
+def render_base_overlay(frame, state: LabelState):
+    """Draw static overlay elements; cache this layer between mouse moves."""
     img = frame.copy()
     h, w = img.shape[:2]
 
     if state.show_grid:
-        draw_grid(img)
+        draw_grid(img, fast=True)
 
     zone = zone_dict_or_none(state.data.get("zone"))
     if state.show_zone and zone is not None:
@@ -272,14 +497,14 @@ def render_overlay(frame, state: LabelState):
 
     for idx, p in enumerate(state.data["early_points"], start=1):
         point_frame = int(p["frame"])
-        if not state.show_all_points and point_frame != state.frame_idx:
+        if not state.should_show_ball_marker(point_frame):
             continue
         x, y = int(round(p["x"])), int(round(p["y"]))
         cv2.circle(img, (x, y), 7, (0, 255, 255), 2)
         draw_text(img, str(idx), x + 8, y - 8, scale=0.45)
 
     pts = state.data["early_points"]
-    if state.show_all_points and len(pts) >= 2:
+    if state.mode != "early" and state.show_all_points and len(pts) >= 2:
         poly = [(int(round(p["x"])), int(round(p["y"]))) for p in pts]
         cv2.polylines(img, [np.array(poly, dtype=np.int32)], isClosed=False, color=(0, 255, 255), thickness=1)
 
@@ -309,15 +534,37 @@ def render_overlay(frame, state: LabelState):
     target_status = "set" if state.target_set() else "not set"
     missing = state.missing_frame_count()
     quality = state.data.get("quality", {})
+    current_ts = state.frame_timestamp_s(state.frame_idx)
+    release = state.data.get("release_frame")
+    release_ts_line = ""
+    if current_ts is not None:
+        release_ts_line = f"time: {format_timestamp_s(current_ts)} ({format_timestamp_ms(current_ts)})"
+        delta_release = state.delta_timestamp_ms(state.frame_idx, int(release) if release is not None else None)
+        if delta_release is not None:
+            release_ts_line += f"  Δrelease: {delta_release:.3f} ms"
+        if state.data["early_points"]:
+            first_ball_frame = int(state.data["early_points"][0]["frame"])
+            delta_first = state.delta_timestamp_ms(state.frame_idx, first_ball_frame)
+            if delta_first is not None:
+                release_ts_line += f"  Δball1: {delta_first:.3f} ms"
+    elif state.data.get("fps"):
+        approx_s = float(state.frame_idx) / float(state.data["fps"])
+        release_ts_line = f"time (approx): {format_timestamp_s(approx_s)} ({format_timestamp_ms(approx_s)})"
+
+    marker_mode = "current frame only" if state.mode == "early" else (
+        "all frames" if state.show_all_points else "current frame only"
+    )
 
     top = [
         f"Frame: {state.frame_idx}",
+        release_ts_line or "time: n/a (no .frames.jsonl sidecar)",
         f"Mode: {mode_label}",
         f"Ball points: {len(state.data['early_points'])} (label every visible frame)",
-        f"Markers: {'all frames' if state.show_all_points else 'current frame only'}",
+        f"Ball markers: {marker_mode}",
         f"Target: {target_status}",
         f"release_frame: {release}",
         f"cross_frame: {target_frame}",
+        f"fps: {state.data.get('fps')} (container {state.data.get('container_fps', 'n/a')})",
         f"type={state.data.get('pitch_type')} zone={state.data.get('zone_result')} loc={state.data.get('location_bucket')}",
         f"confidence={quality.get('label_confidence')} est_cross={quality.get('crossing_estimated')}",
     ]
@@ -326,11 +573,9 @@ def render_overlay(frame, state: LabelState):
     notes = str(state.data.get("notes") or "")
     if notes:
         top.append(f"notes: {notes[:60]}{'...' if len(notes) > 60 else ''}")
-    if state.show_coords and state.mouse_x is not None and state.mouse_y is not None:
-        top.append(f"Mouse: x={state.mouse_x}, y={state.mouse_y}")
-
     for i, line in enumerate(top):
-        draw_text(img, line, 16, 28 + i * 24)
+        if line:
+            draw_text(img, line, 16, 28 + i * 24)
 
     if state.show_help:
         y0 = max(220, h - 160)
@@ -338,6 +583,75 @@ def render_overlay(frame, state: LabelState):
             draw_text(img, line, 16, y0 + i * 22, scale=0.48)
 
     return img
+
+
+def restore_mouse_hud(display, base) -> None:
+    y0 = MOUSE_HUD_Y - 18
+    y1 = y0 + MOUSE_HUD_H
+    x1 = MOUSE_HUD_X + MOUSE_HUD_W
+    display[y0:y1, MOUSE_HUD_X:x1] = base[y0:y1, MOUSE_HUD_X:x1]
+
+
+def erase_crosshair(display, base, mx: int, my: int) -> None:
+    h, w = display.shape[:2]
+    half = CROSSHAIR_HALF
+    x0, x1 = max(0, mx - half), min(w, mx + half + 1)
+    display[max(0, my - 1) : min(h, my + 2), x0:x1] = base[max(0, my - 1) : min(h, my + 2), x0:x1]
+    y0, y1 = max(0, my - half), min(h, my + half + 1)
+    display[y0:y1, max(0, mx - 1) : min(w, mx + 2)] = base[y0:y1, max(0, mx - 1) : min(w, mx + 2)]
+
+
+def draw_crosshair(display, mx: int, my: int) -> None:
+    half = CROSSHAIR_HALF
+    color = (0, 255, 255)
+    cv2.line(display, (mx - half, my), (mx + half, my), color, 1, cv2.LINE_8)
+    cv2.line(display, (mx, my - half), (mx, my + half), color, 1, cv2.LINE_8)
+
+
+def draw_mouse_hud(display, mx: int, my: int) -> None:
+    cv2.putText(
+        display,
+        f"Mouse: x={mx}, y={my}",
+        (MOUSE_HUD_X, MOUSE_HUD_Y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (255, 255, 255),
+        1,
+        cv2.LINE_8,
+    )
+
+
+def reset_display_from_base(base, state: LabelState):
+    """One full copy when the static overlay changes."""
+    display = base.copy()
+    if state.show_coords and state.mouse_x is not None and state.mouse_y is not None:
+        draw_crosshair(display, state.mouse_x, state.mouse_y)
+        draw_mouse_hud(display, state.mouse_x, state.mouse_y)
+    return display
+
+
+def update_mouse_on_display(display, base, state: LabelState, last_mx: Optional[int], last_my: Optional[int]) -> None:
+    """Patch only crosshair + HUD regions instead of copying the full frame."""
+    if last_mx is not None and last_my is not None:
+        erase_crosshair(display, base, last_mx, last_my)
+    restore_mouse_hud(display, base)
+
+    if state.show_coords and state.mouse_x is not None and state.mouse_y is not None:
+        draw_crosshair(display, state.mouse_x, state.mouse_y)
+        draw_mouse_hud(display, state.mouse_x, state.mouse_y)
+
+
+def render_mouse_overlay(base, state: LabelState):
+    """Fallback full redraw (tests / one-off renders)."""
+    display = base.copy()
+    if state.show_coords and state.mouse_x is not None and state.mouse_y is not None:
+        draw_crosshair(display, state.mouse_x, state.mouse_y)
+        draw_mouse_hud(display, state.mouse_x, state.mouse_y)
+    return display
+
+
+def render_overlay(frame, state: LabelState):
+    return render_mouse_overlay(render_base_overlay(frame, state), state)
 
 
 def seek_frame(cap: cv2.VideoCapture, frame_idx: int):
@@ -377,8 +691,10 @@ def handle_key(
         state.data["release_frame"] = int(state.frame_idx)
     elif key == ord("e"):
         state.mode = "early"
+        state.show_all_points = False
     elif key == ord("t"):
         state.mode = "target"
+        state.show_all_points = True
     elif key == ord("u"):
         state.undo()
     elif key == ord("g"):
@@ -386,11 +702,14 @@ def handle_key(
     elif key == ord("z"):
         state.show_zone = not state.show_zone
     elif key == ord("v"):
-        state.show_all_points = not state.show_all_points
+        if state.mode == "early":
+            print("Ball markers stay on the current frame only in early-point mode (press t to review all points).")
+        else:
+            state.show_all_points = not state.show_all_points
     elif key == ord("c"):
         state.show_coords = not state.show_coords
     elif key == ord("s"):
-        state.save()
+        state.save(min_points=state.min_points)
     elif key == ord("h"):
         state.show_help = not state.show_help
     elif key == ord(" "):
@@ -441,6 +760,12 @@ def main() -> None:
     parser.add_argument("--video", required=True, help="Pitch video path")
     parser.add_argument("--out", required=True, help="Output label JSON path")
     parser.add_argument("--zone", help="Optional JSON file with strike-zone rectangle")
+    parser.add_argument("--grid", action="store_true", help="Show grid overlay on launch (default: hidden)")
+    parser.add_argument("--min-points", type=int, default=5, help="Minimum early points for save warnings")
+    parser.add_argument("--pitch-type", help="Pitch metadata, e.g. fastball")
+    parser.add_argument("--zone-result", help="Pitch metadata, e.g. strike")
+    parser.add_argument("--location-bucket", help="Pitch metadata, e.g. high_inside")
+    parser.add_argument("--notes", default="", help="Freeform notes for this pitch")
     parser.add_argument(
         "--frame-step",
         type=int,
@@ -465,7 +790,7 @@ def main() -> None:
     if not cap.isOpened():
         raise SystemExit(f"Could not open video: {video_path}")
 
-    fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+    container_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
@@ -473,12 +798,21 @@ def main() -> None:
     state = LabelState(
         video_path=video_path,
         out_path=out_path,
-        fps=fps,
+        fps=container_fps,
         frame_width=frame_width,
         frame_height=frame_height,
         auto_step=args.frame_step,
         difficulty=args.difficulty,
     )
+    state.min_points = max(1, args.min_points)
+    state.apply_metadata(args.pitch_type, args.zone_result, args.location_bucket, args.notes)
+    if state.data.get("fps") != container_fps and state.data.get("requested_fps") is not None:
+        print(
+            f"Using measured fps={state.data['fps']} from sidecar "
+            f"(container={container_fps}, requested={state.data['requested_fps']})"
+        )
+    if args.grid:
+        state.show_grid = True
 
     if args.load and out_path.exists():
         state.load_existing(out_path)
@@ -495,10 +829,28 @@ def main() -> None:
 
     window = "manual_pitch_label"
     cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(window, frame_width, frame_height)
+    if state.frame_timestamps:
+        print(f"Loaded {len(state.frame_timestamps)} exact frame timestamps from sidecar")
+    else:
+        sidecar_report = verify_video_sidecars(video_path)
+        print(
+            "No timing sidecar found. For exact ms timing, record with capture/record_clip.py "
+            "or run: python scripts/backfill_timing_sidecars.py "
+            f"--video {video_path}"
+        )
+        if sidecar_report.get("status") == "frame_count_mismatch":
+            print("WARNING: existing sidecar frame count does not match MP4 — re-record or backfill.")
+    print(
+        "Early-point mode shows the ball marker on the current frame only. "
+        "Press t to review the full path in target mode."
+    )
 
     def on_mouse(event, x, y, flags, userdata):  # noqa: ANN001, ARG001
         state.mouse_x = int(x)
         state.mouse_y = int(y)
+        if event in (cv2.EVENT_MOUSEMOVE, cv2.EVENT_LBUTTONDOWN):
+            state.needs_redraw = True
         if event == cv2.EVENT_LBUTTONDOWN:
             state.add_click(x, y, frame_count)
 
@@ -506,24 +858,62 @@ def main() -> None:
 
     playing = False
     quit_requested = False
-    play_delay_ms = max(1, int(1000 / fps)) if fps > 0 else 33
+    label_fps = float(state.data.get("fps") or container_fps or 0.0)
+    play_delay_ms = max(1, int(1000 / label_fps)) if label_fps > 0 else 33
+
+    cached_frame_idx = -1
+    cached_frame = None
+    cached_base_key: Optional[tuple[Any, ...]] = None
+    cached_base = None
+    display_img = None
+    last_drawn_mouse: tuple[Optional[int], Optional[int]] = (None, None)
 
     while True:
-        frame = seek_frame(cap, state.frame_idx)
-        if frame is None:
-            state.frame_idx = clamp_frame(state.frame_idx, frame_count)
-            frame = seek_frame(cap, state.frame_idx)
-            if frame is None:
-                break
-
-        img = render_overlay(frame, state)
-        cv2.imshow(window, img)
-        key_raw = cv2.waitKeyEx(play_delay_ms if playing else 0)
-        if key_raw == -1 and playing:
+        if playing:
             state.frame_idx = clamp_frame(state.frame_idx + 1, frame_count)
-            if state.frame_idx >= frame_count - 1:
+            if state.frame_idx >= max(0, frame_count - 1):
                 playing = False
-            continue
+            state.needs_redraw = True
+
+        if state.frame_idx != cached_frame_idx:
+            cached_frame = seek_frame(cap, state.frame_idx)
+            if cached_frame is None:
+                state.frame_idx = clamp_frame(state.frame_idx, frame_count)
+                cached_frame = seek_frame(cap, state.frame_idx)
+                if cached_frame is None:
+                    break
+            cached_frame_idx = state.frame_idx
+            cached_base_key = None
+            state.needs_redraw = True
+
+        base_rebuilt = False
+        base_key = base_overlay_key(state)
+        if base_key != cached_base_key:
+            cached_base = render_base_overlay(cached_frame, state)
+            cached_base_key = base_key
+            display_img = reset_display_from_base(cached_base, state)
+            last_drawn_mouse = (
+                (state.mouse_x, state.mouse_y)
+                if state.show_coords and state.mouse_x is not None
+                else (None, None)
+            )
+            base_rebuilt = True
+            state.needs_redraw = True
+
+        if state.needs_redraw and display_img is not None and cached_base is not None:
+            if not base_rebuilt:
+                update_mouse_on_display(
+                    display_img,
+                    cached_base,
+                    state,
+                    last_drawn_mouse[0],
+                    last_drawn_mouse[1],
+                )
+            last_drawn_mouse = (state.mouse_x, state.mouse_y)
+            cv2.imshow(window, display_img)
+            state.needs_redraw = False
+
+        key_raw = cv2.waitKeyEx(play_delay_ms if playing else 1)
         if key_raw == -1:
             continue
 
@@ -531,6 +921,7 @@ def main() -> None:
             quit_requested = True
             break
 
+        state.needs_redraw = True
         playing = handle_key(key_raw, state, frame_count, playing=playing)
 
     cap.release()
