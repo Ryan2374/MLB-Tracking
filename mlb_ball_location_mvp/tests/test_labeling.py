@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -7,7 +8,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from labeling.manual_label_pitch import LabelState
+from labeling.manual_label_pitch import LabelState, apply_recording_fps_fields
 
 
 def test_validation_warnings_incomplete() -> None:
@@ -53,3 +54,28 @@ def test_save_prints_warnings(capsys, tmp_path: Path) -> None:
     captured = capsys.readouterr()
     assert "WARNING: label may be incomplete" in captured.out
     assert (tmp_path / "out.json").exists()
+
+
+def test_apply_recording_fps_from_sidecar(tmp_path: Path) -> None:
+    video = tmp_path / "pitch_001.mp4"
+    video.write_bytes(b"")
+    meta = {"actual_fps": 27.1, "requested_fps": 60.0, "frame_count": 163}
+    meta_sidecar = tmp_path / "pitch_001.meta.json"
+    meta_sidecar.write_text(json.dumps(meta), encoding="utf-8")
+
+    data: dict = {}
+    resolved = apply_recording_fps_fields(data, video, container_fps=60.0)
+    assert resolved == 27.1
+    assert data["fps"] == 27.1
+    assert data["requested_fps"] == 60.0
+    assert data["container_fps"] == 60.0
+
+
+def test_apply_recording_fps_falls_back_to_container(tmp_path: Path) -> None:
+    video = tmp_path / "pitch_001.mp4"
+    video.write_bytes(b"")
+    data: dict = {}
+    resolved = apply_recording_fps_fields(data, video, container_fps=60.0)
+    assert resolved == 60.0
+    assert data["fps"] == 60.0
+    assert "requested_fps" not in data

@@ -30,7 +30,7 @@ from coords.calibration import draw_grid, draw_zone, full_frame_metadata, zone_d
 
 CROSSHAIR_HALF = 14
 MOUSE_HUD_X = 16
-MOUSE_HUD_Y = 28 + 6 * 24
+MOUSE_HUD_Y = 28 + 7 * 24
 MOUSE_HUD_W = 300
 MOUSE_HUD_H = 26
 
@@ -51,6 +51,55 @@ HELP_LINES = [
     "h: toggle this help",
     "q: quit",
 ]
+
+
+def meta_sidecar_path(video_path: Path) -> Path:
+    return video_path.with_suffix(".meta.json")
+
+
+def resolve_meta_sidecar(video_path: Path) -> Optional[dict[str, Any]]:
+    candidates = [video_path, Path.cwd() / video_path]
+    seen: set[Path] = set()
+    for candidate in candidates:
+        meta_path = meta_sidecar_path(candidate.resolve() if candidate.exists() else candidate)
+        if meta_path in seen:
+            continue
+        seen.add(meta_path)
+        if not meta_path.exists():
+            continue
+        with meta_path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    return None
+
+
+def apply_recording_fps_fields(
+    data: dict[str, Any],
+    video_path: Path,
+    *,
+    container_fps: float,
+) -> Optional[float]:
+    """Prefer measured capture FPS from .meta.json over MP4 container metadata."""
+    meta = resolve_meta_sidecar(video_path)
+    if meta is not None:
+        actual = meta.get("actual_fps")
+        if actual is not None and float(actual) > 0:
+            data["fps"] = float(actual)
+            requested = meta.get("requested_fps")
+            if requested is not None and float(requested) > 0:
+                data["requested_fps"] = float(requested)
+            if container_fps > 0:
+                data["container_fps"] = float(container_fps)
+            else:
+                data.pop("container_fps", None)
+            return float(actual)
+
+    data.pop("requested_fps", None)
+    data.pop("container_fps", None)
+    if container_fps > 0:
+        data["fps"] = float(container_fps)
+        return float(container_fps)
+    data["fps"] = None
+    return None
 
 
 class LabelState:
@@ -92,6 +141,7 @@ class LabelState:
             "location_bucket": None,
             "notes": "",
         }
+        apply_recording_fps_fields(self.data, video_path, container_fps=fps)
 
     def add_click(self, x: int, y: int) -> None:
         if self.mode == "early":
@@ -148,8 +198,7 @@ class LabelState:
         state.data["video"] = str(video_path)
         state.data["frame_width"] = frame_width
         state.data["frame_height"] = frame_height
-        if fps > 0:
-            state.data["fps"] = fps
+        apply_recording_fps_fields(state.data, video_path, container_fps=fps)
         release = state.data.get("release_frame")
         if release is not None:
             state.frame_idx = int(release)
@@ -291,6 +340,7 @@ def render_base_overlay(frame, state: LabelState):
         f"Target: {target_status}",
         f"release_frame: {release}",
         f"cross_frame: {target_frame}",
+        f"fps: {state.data.get('fps')} (container {state.data.get('container_fps', 'n/a')})",
         "",  # reserved for live mouse readout
         f"space: {state.data.get('coordinate_space')} ({w}x{h})",
     ]
@@ -402,7 +452,7 @@ def main() -> None:
     if not cap.isOpened():
         raise SystemExit(f"Could not open video: {video_path}")
 
-    fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+    container_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
@@ -413,7 +463,7 @@ def main() -> None:
         state = LabelState.from_existing(
             video_path=video_path,
             out_path=out_path,
-            fps=fps,
+            fps=container_fps,
             frame_width=frame_width,
             frame_height=frame_height,
             existing=existing,
@@ -423,12 +473,17 @@ def main() -> None:
         state = LabelState(
             video_path=video_path,
             out_path=out_path,
-            fps=fps,
+            fps=container_fps,
             frame_width=frame_width,
             frame_height=frame_height,
         )
 
     state.apply_metadata(args.pitch_type, args.zone_result, args.location_bucket, args.notes)
+    if state.data.get("fps") != container_fps and state.data.get("requested_fps") is not None:
+        print(
+            f"Using measured fps={state.data['fps']} from sidecar "
+            f"(container={container_fps}, requested={state.data['requested_fps']})"
+        )
     if args.grid:
         state.show_grid = True
 
