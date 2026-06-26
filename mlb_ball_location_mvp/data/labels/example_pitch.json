@@ -8,17 +8,31 @@
   "pitch_id": "example_pitch",
   "video": null,
   "fps": 60.0,
+  "difficulty": "GOAT",
+  "pitch_type": "fastball",
+  "zone_result": "strike",
+  "location_bucket": "middle",
   "release_frame": 100,
   "early_points": [
     {"frame": 101, "x": 400.0, "y": 200.0},
     {"frame": 102, "x": 410.0, "y": 206.1},
     {"frame": 103, "x": 420.0, "y": 212.4},
     {"frame": 104, "x": 430.0, "y": 218.9},
-    {"frame": 105, "x": 440.0, "y": 225.6}
+    {"frame": 105, "x": 440.0, "y": 225.6},
+    {"frame": 106, "x": 450.0, "y": 232.5},
+    {"frame": 107, "x": 460.0, "y": 240.0},
+    {"frame": 108, "x": 470.0, "y": 248.0},
+    {"frame": 109, "x": 480.0, "y": 256.5}
   ],
   "target": {
-    "cross_frame": 121,
-    "cross_x": 600.0,
-    "cross_y": 360.0
-  }
+    "cross_frame": 110,
+    "cross_x": 500.0,
+    "cross_y": 265.0
+  },
+  "quality": {
+    "ball_visible": true,
+    "crossing_estimated": false,
+    "label_confidence": "high"
+  },
+  "notes": ""
 }

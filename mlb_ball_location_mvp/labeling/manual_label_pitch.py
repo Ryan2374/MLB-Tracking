@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 """Manual pitch labeling tool.
 
-Use this to create clean MVP labels before automating ball detection.
+Label the full observed ball flight after release, plus the plate-crossing target.
 All coordinates are stored in full-frame pixel space (top-left origin).
-The output label contains:
-- coordinate metadata (frame size, coordinate_space)
-- release_frame
-- first 5-10 early ball center points
-- target crossing point: cross_frame, cross_x, cross_y
-- optional strike-zone rectangle for later normalization
+
+The `early_points` field stores every visible ball position after release.
+Prediction later uses only the first N of those points via --n-points.
 """
 
 from __future__ import annotations
@@ -24,26 +21,65 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 import cv2
+import numpy as np
 
 from coords.calibration import draw_grid, draw_zone, full_frame_metadata, zone_dict_or_none
 
+PITCH_TYPES = [
+    "fastball",
+    "slider",
+    "curveball",
+    "changeup",
+    "cutter",
+    "sinker",
+    "splitter",
+    "unknown",
+]
+ZONE_RESULTS = ["strike", "borderline", "ball", "unknown"]
+LOCATION_BUCKETS = [
+    "middle",
+    "high",
+    "low",
+    "inside",
+    "outside",
+    "high_inside",
+    "high_outside",
+    "low_inside",
+    "low_outside",
+    "above_zone",
+    "below_zone",
+    "way_inside",
+    "way_outside",
+    "unknown",
+]
+LABEL_CONFIDENCE = ["high", "medium", "low"]
 
 HELP_LINES = [
-    "Controls:",
-    "n/p: next/prev frame",
-    "j/k: +/- 10 frames",
-    "r: set release_frame",
-    "e: early-point mode",
-    "t: target-crossing mode",
-    "left click: add point for current mode",
-    "u: undo early point or clear target",
-    "g: toggle grid overlay",
-    "z: toggle strike-zone box",
-    "c: toggle coordinate readout",
-    "s: save label",
-    "h: toggle this help",
-    "q: quit",
+    "Workflow: r=release | e=ball points | click every visible frame | t=target | s=save",
+    "n/p or arrows: next/prev frame | j/k: +/-10 | space: play/pause | f: next gap",
+    "Ball points: click center of ball each frame (skip hidden frames)",
+    "Target: plate/strike-zone crossing, not catcher glove",
+    "Metadata: [/]=pitch type | ;/'=zone | ,/.=location | m=confidence | b=est. cross | i=notes",
+    "v: all-frame markers | g: grid | z: zone box | u: undo | h: help | q: quit",
 ]
+
+ARROW_LEFT = {2424832, 81, 2}
+ARROW_RIGHT = {2555904, 83, 3}
+
+
+def default_quality() -> dict[str, Any]:
+    return {
+        "ball_visible": True,
+        "crossing_estimated": False,
+        "label_confidence": "high",
+    }
+
+
+def cycle_option(options: list[str], current: str, direction: int) -> str:
+    if current not in options:
+        return options[0]
+    idx = (options.index(current) + direction) % len(options)
+    return options[idx]
 
 
 class LabelState:
@@ -54,16 +90,21 @@ class LabelState:
         fps: float,
         frame_width: int,
         frame_height: int,
+        *,
+        auto_step: int = 1,
+        difficulty: str = "GOAT",
     ) -> None:
         self.video_path = video_path
         self.out_path = out_path
         self.frame_width = frame_width
         self.frame_height = frame_height
+        self.auto_step = max(0, auto_step)
         self.mode = "early"
         self.frame_idx = 0
         self.show_help = True
         self.show_grid = True
         self.show_zone = True
+        self.show_all_points = False
         self.show_coords = True
         self.mouse_x: Optional[int] = None
         self.mouse_y: Optional[int] = None
@@ -72,6 +113,10 @@ class LabelState:
             "pitch_id": video_path.stem,
             "video": str(video_path),
             "fps": fps if fps > 0 else None,
+            "difficulty": difficulty,
+            "pitch_type": "unknown",
+            "zone_result": "unknown",
+            "location_bucket": "unknown",
             "release_frame": None,
             "early_points": [],
             "target": {
@@ -79,10 +124,95 @@ class LabelState:
                 "cross_x": None,
                 "cross_y": None,
             },
+            "quality": default_quality(),
+            "notes": "",
         }
 
-    def add_click(self, x: int, y: int) -> None:
+    def labeled_frames(self) -> set[int]:
+        return {int(p["frame"]) for p in self.data["early_points"]}
+
+    def ball_point_range_end(self) -> Optional[int]:
+        target = self.data["target"]
+        cross_frame = target.get("cross_frame")
+        if cross_frame is not None:
+            return int(cross_frame) - 1
+        return None
+
+    def first_unlabeled_frame(self) -> Optional[int]:
+        release = self.data.get("release_frame")
+        if release is None:
+            return None
+        end = self.ball_point_range_end()
+        if end is None:
+            if self.data["early_points"]:
+                end = int(self.data["early_points"][-1]["frame"]) + 5
+            else:
+                end = int(release) + 20
+        labeled = self.labeled_frames()
+        for frame in range(int(release) + 1, int(end) + 1):
+            if frame not in labeled:
+                return frame
+        return None
+
+    def missing_frame_count(self) -> int:
+        release = self.data.get("release_frame")
+        if release is None:
+            return 0
+        end = self.ball_point_range_end()
+        if end is None:
+            return 0
+        labeled = self.labeled_frames()
+        return sum(
+            1 for frame in range(int(release) + 1, int(end) + 1)
+            if frame not in labeled
+        )
+
+    def validation_warnings(self) -> list[str]:
+        warnings: list[str] = []
+        release = self.data.get("release_frame")
+        points = self.data["early_points"]
+        target = self.data["target"]
+
+        if release is None:
+            warnings.append("release_frame not set")
+        if len(points) < 5:
+            warnings.append(f"only {len(points)} ball points (aim for 5-10 on GOAT)")
+        if release is not None and points:
+            first_frame = int(points[0]["frame"])
+            if first_frame <= int(release):
+                warnings.append("first ball point should be after release_frame")
+        if target.get("cross_x") is None or target.get("cross_y") is None:
+            warnings.append("target crossing not set")
+        missing = self.missing_frame_count()
+        if missing > 0:
+            warnings.append(f"{missing} visible frames still unlabeled before crossing")
+        return warnings
+
+    def load_existing(self, path: Path) -> None:
+        with path.open("r", encoding="utf-8") as f:
+            payload = json.load(f)
+        self.data.update(payload)
+        self.data["pitch_id"] = self.video_path.stem
+        self.data["video"] = str(self.video_path)
+        quality = self.data.get("quality")
+        if not isinstance(quality, dict):
+            self.data["quality"] = default_quality()
+        else:
+            merged = default_quality()
+            merged.update(quality)
+            self.data["quality"] = merged
+        if "notes" not in self.data:
+            self.data["notes"] = ""
+        release = self.data.get("release_frame")
+        if release is not None:
+            self.frame_idx = int(release)
+        print(f"Loaded existing label from {path}")
+
+    def add_click(self, x: int, y: int, frame_count: int) -> None:
         if self.mode == "early":
+            release = self.data.get("release_frame")
+            if release is not None and self.frame_idx <= int(release):
+                print("Warning: ball point should be after release_frame")
             point = {"frame": int(self.frame_idx), "x": float(x), "y": float(y)}
             points = self.data["early_points"]
             replaced = False
@@ -94,6 +224,8 @@ class LabelState:
             if not replaced:
                 points.append(point)
             points.sort(key=lambda p: int(p["frame"]))
+            if not replaced and self.auto_step > 0 and frame_count > 0:
+                self.frame_idx = min(frame_count - 1, self.frame_idx + self.auto_step)
         else:
             self.data["target"] = {
                 "cross_frame": int(self.frame_idx),
@@ -113,6 +245,8 @@ class LabelState:
         return target.get("cross_x") is not None and target.get("cross_y") is not None
 
     def save(self) -> None:
+        for warning in self.validation_warnings():
+            print(f"Warning: {warning}")
         self.out_path.parent.mkdir(parents=True, exist_ok=True)
         with self.out_path.open("w", encoding="utf-8") as f:
             json.dump(self.data, f, indent=2)
@@ -137,40 +271,69 @@ def render_overlay(frame, state: LabelState):
         draw_zone(img, zone)
 
     for idx, p in enumerate(state.data["early_points"], start=1):
+        point_frame = int(p["frame"])
+        if not state.show_all_points and point_frame != state.frame_idx:
+            continue
         x, y = int(round(p["x"])), int(round(p["y"]))
-        same_frame = int(p["frame"]) == state.frame_idx
-        radius = 7 if same_frame else 4
-        cv2.circle(img, (x, y), radius, (0, 255, 255), 2)
+        cv2.circle(img, (x, y), 7, (0, 255, 255), 2)
         draw_text(img, str(idx), x + 8, y - 8, scale=0.45)
 
+    pts = state.data["early_points"]
+    if state.show_all_points and len(pts) >= 2:
+        poly = [(int(round(p["x"])), int(round(p["y"]))) for p in pts]
+        cv2.polylines(img, [np.array(poly, dtype=np.int32)], isClosed=False, color=(0, 255, 255), thickness=1)
+
+    release = state.data.get("release_frame")
+    if release is not None and int(release) == state.frame_idx:
+        draw_text(img, "RELEASE", 16, h - 24, scale=0.7, thickness=2)
+
+    labeled = state.labeled_frames()
+    if release is not None and state.frame_idx > int(release) and state.frame_idx not in labeled:
+        target_frame = state.data["target"].get("cross_frame")
+        if target_frame is None or state.frame_idx < int(target_frame):
+            draw_text(img, "unlabeled frame", w - 220, 28, scale=0.55, thickness=1)
+
     target = state.data["target"]
-    if target.get("cross_x") is not None and target.get("cross_y") is not None:
+    target_frame = target.get("cross_frame")
+    show_target = (
+        target.get("cross_x") is not None
+        and target.get("cross_y") is not None
+        and (state.show_all_points or target_frame == state.frame_idx)
+    )
+    if show_target:
         tx, ty = int(round(target["cross_x"])), int(round(target["cross_y"]))
         cv2.drawMarker(img, (tx, ty), (0, 0, 255), markerType=cv2.MARKER_CROSS, markerSize=24, thickness=2)
         draw_text(img, "target", tx + 10, ty - 10, scale=0.5)
 
-    release = state.data.get("release_frame")
-    target_frame = target.get("cross_frame")
-    mode_label = "early-point" if state.mode == "early" else "target-crossing"
+    mode_label = "ball-point" if state.mode == "early" else "target-crossing"
     target_status = "set" if state.target_set() else "not set"
+    missing = state.missing_frame_count()
+    quality = state.data.get("quality", {})
 
     top = [
         f"Frame: {state.frame_idx}",
         f"Mode: {mode_label}",
-        f"Early points: {len(state.data['early_points'])}",
+        f"Ball points: {len(state.data['early_points'])} (label every visible frame)",
+        f"Markers: {'all frames' if state.show_all_points else 'current frame only'}",
         f"Target: {target_status}",
         f"release_frame: {release}",
         f"cross_frame: {target_frame}",
+        f"type={state.data.get('pitch_type')} zone={state.data.get('zone_result')} loc={state.data.get('location_bucket')}",
+        f"confidence={quality.get('label_confidence')} est_cross={quality.get('crossing_estimated')}",
     ]
+    if missing > 0:
+        top.append(f"Missing ball frames before crossing: {missing}")
+    notes = str(state.data.get("notes") or "")
+    if notes:
+        top.append(f"notes: {notes[:60]}{'...' if len(notes) > 60 else ''}")
     if state.show_coords and state.mouse_x is not None and state.mouse_y is not None:
         top.append(f"Mouse: x={state.mouse_x}, y={state.mouse_y}")
-    top.append(f"space: {state.data.get('coordinate_space')} ({w}x{h})")
 
     for i, line in enumerate(top):
         draw_text(img, line, 16, 28 + i * 24)
 
     if state.show_help:
-        y0 = max(220, h - 280)
+        y0 = max(220, h - 160)
         for i, line in enumerate(HELP_LINES):
             draw_text(img, line, 16, y0 + i * 22, scale=0.48)
 
@@ -185,11 +348,115 @@ def seek_frame(cap: cv2.VideoCapture, frame_idx: int):
     return frame
 
 
+def clamp_frame(frame_idx: int, frame_count: int) -> int:
+    if frame_count <= 0:
+        return max(0, frame_idx)
+    return max(0, min(frame_count - 1, frame_idx))
+
+
+def handle_key(
+    key_raw: int,
+    state: LabelState,
+    frame_count: int,
+    *,
+    playing: bool,
+) -> bool:
+    """Return updated playing flag."""
+    key = key_raw & 0xFF
+    if key == ord("q"):
+        return playing
+    if key_raw in ARROW_RIGHT or key == ord("n"):
+        state.frame_idx = clamp_frame(state.frame_idx + 1, frame_count)
+    elif key_raw in ARROW_LEFT or key == ord("p"):
+        state.frame_idx = clamp_frame(state.frame_idx - 1, frame_count)
+    elif key == ord("j"):
+        state.frame_idx = clamp_frame(state.frame_idx + 10, frame_count)
+    elif key == ord("k"):
+        state.frame_idx = clamp_frame(state.frame_idx - 10, frame_count)
+    elif key == ord("r"):
+        state.data["release_frame"] = int(state.frame_idx)
+    elif key == ord("e"):
+        state.mode = "early"
+    elif key == ord("t"):
+        state.mode = "target"
+    elif key == ord("u"):
+        state.undo()
+    elif key == ord("g"):
+        state.show_grid = not state.show_grid
+    elif key == ord("z"):
+        state.show_zone = not state.show_zone
+    elif key == ord("v"):
+        state.show_all_points = not state.show_all_points
+    elif key == ord("c"):
+        state.show_coords = not state.show_coords
+    elif key == ord("s"):
+        state.save()
+    elif key == ord("h"):
+        state.show_help = not state.show_help
+    elif key == ord(" "):
+        playing = not playing
+    elif key == ord("a"):
+        release = state.data.get("release_frame")
+        if release is not None:
+            state.frame_idx = clamp_frame(int(release), frame_count)
+    elif key == ord("f"):
+        nxt = state.first_unlabeled_frame()
+        if nxt is not None:
+            state.frame_idx = clamp_frame(nxt, frame_count)
+    elif key == ord("["):
+        state.data["pitch_type"] = cycle_option(PITCH_TYPES, str(state.data.get("pitch_type", "unknown")), -1)
+    elif key == ord("]"):
+        state.data["pitch_type"] = cycle_option(PITCH_TYPES, str(state.data.get("pitch_type", "unknown")), 1)
+    elif key == ord(";"):
+        state.data["zone_result"] = cycle_option(ZONE_RESULTS, str(state.data.get("zone_result", "unknown")), -1)
+    elif key == ord("'"):
+        state.data["zone_result"] = cycle_option(ZONE_RESULTS, str(state.data.get("zone_result", "unknown")), 1)
+    elif key == ord(","):
+        state.data["location_bucket"] = cycle_option(
+            LOCATION_BUCKETS, str(state.data.get("location_bucket", "unknown")), -1
+        )
+    elif key == ord("."):
+        state.data["location_bucket"] = cycle_option(
+            LOCATION_BUCKETS, str(state.data.get("location_bucket", "unknown")), 1
+        )
+    elif key == ord("m"):
+        quality = state.data.setdefault("quality", default_quality())
+        quality["label_confidence"] = cycle_option(
+            LABEL_CONFIDENCE, str(quality.get("label_confidence", "high")), 1
+        )
+    elif key == ord("b"):
+        quality = state.data.setdefault("quality", default_quality())
+        quality["crossing_estimated"] = not bool(quality.get("crossing_estimated"))
+    elif key == ord("i"):
+        print("Enter notes (blank to clear). Check this terminal:")
+        try:
+            state.data["notes"] = input("notes> ").strip()
+        except EOFError:
+            pass
+    return playing
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--video", required=True, help="Pitch video path")
     parser.add_argument("--out", required=True, help="Output label JSON path")
     parser.add_argument("--zone", help="Optional JSON file with strike-zone rectangle")
+    parser.add_argument(
+        "--frame-step",
+        type=int,
+        default=1,
+        help="Frames to advance after each new ball point. Default: 1",
+    )
+    parser.add_argument(
+        "--difficulty",
+        default="GOAT",
+        help="Capture difficulty tag saved in the label. Default: GOAT",
+    )
+    parser.add_argument(
+        "--load",
+        action="store_true",
+        help="Load existing label from --out if the file exists",
+    )
     args = parser.parse_args()
 
     video_path = Path(args.video)
@@ -209,7 +476,15 @@ def main() -> None:
         fps=fps,
         frame_width=frame_width,
         frame_height=frame_height,
+        auto_step=args.frame_step,
+        difficulty=args.difficulty,
     )
+
+    if args.load and out_path.exists():
+        state.load_existing(out_path)
+    elif out_path.exists():
+        state.load_existing(out_path)
+        print("Tip: resuming existing label. Use a new --out path to start fresh.")
 
     if args.zone:
         with Path(args.zone).open("r", encoding="utf-8") as f:
@@ -225,53 +500,43 @@ def main() -> None:
         state.mouse_x = int(x)
         state.mouse_y = int(y)
         if event == cv2.EVENT_LBUTTONDOWN:
-            state.add_click(x, y)
+            state.add_click(x, y, frame_count)
 
     cv2.setMouseCallback(window, on_mouse)
+
+    playing = False
+    quit_requested = False
+    play_delay_ms = max(1, int(1000 / fps)) if fps > 0 else 33
 
     while True:
         frame = seek_frame(cap, state.frame_idx)
         if frame is None:
-            state.frame_idx = max(0, min(state.frame_idx, frame_count - 1))
+            state.frame_idx = clamp_frame(state.frame_idx, frame_count)
             frame = seek_frame(cap, state.frame_idx)
             if frame is None:
                 break
 
         img = render_overlay(frame, state)
         cv2.imshow(window, img)
-        key = cv2.waitKey(0) & 0xFF
+        key_raw = cv2.waitKeyEx(play_delay_ms if playing else 0)
+        if key_raw == -1 and playing:
+            state.frame_idx = clamp_frame(state.frame_idx + 1, frame_count)
+            if state.frame_idx >= frame_count - 1:
+                playing = False
+            continue
+        if key_raw == -1:
+            continue
 
-        if key == ord("q"):
+        if (key_raw & 0xFF) == ord("q"):
+            quit_requested = True
             break
-        if key == ord("n"):
-            state.frame_idx = min(frame_count - 1 if frame_count else state.frame_idx + 1, state.frame_idx + 1)
-        elif key == ord("p"):
-            state.frame_idx = max(0, state.frame_idx - 1)
-        elif key == ord("j"):
-            state.frame_idx = min(frame_count - 1 if frame_count else state.frame_idx + 10, state.frame_idx + 10)
-        elif key == ord("k"):
-            state.frame_idx = max(0, state.frame_idx - 10)
-        elif key == ord("r"):
-            state.data["release_frame"] = int(state.frame_idx)
-        elif key == ord("e"):
-            state.mode = "early"
-        elif key == ord("t"):
-            state.mode = "target"
-        elif key == ord("u"):
-            state.undo()
-        elif key == ord("g"):
-            state.show_grid = not state.show_grid
-        elif key == ord("z"):
-            state.show_zone = not state.show_zone
-        elif key == ord("c"):
-            state.show_coords = not state.show_coords
-        elif key == ord("s"):
-            state.save()
-        elif key == ord("h"):
-            state.show_help = not state.show_help
+
+        playing = handle_key(key_raw, state, frame_count, playing=playing)
 
     cap.release()
     cv2.destroyAllWindows()
+    if quit_requested:
+        return
 
 
 if __name__ == "__main__":
