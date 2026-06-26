@@ -84,7 +84,16 @@ data/raw/pitch_001.frames.jsonl
 data/raw/pitch_001.meta.json
 ```
 
-The recorder warms up the device, measures actual capture FPS, and writes the MP4 at that rate so **encoded frame count matches the sidecar**. Check `frames_in_sync` in `.meta.json`. If capture runs below requested FPS (common at 1080p), you'll see a warning — labels still use **frame numbers from the video**.
+The recorder warms up the device, measures actual capture FPS, and writes the MP4 at that rate so **encoded frame count matches the sidecar**. Check `frames_in_sync` in `.meta.json`. Sidecars store **exact wall-clock timestamps** (`timing_source: capture_sidecar`).
+
+For clips recorded before sidecars existed, backfill approximate timing:
+
+```bash
+python scripts/backfill_timing_sidecars.py --raw-dir data/raw
+python scripts/verify_timing_sidecars.py --raw-dir data/raw --enrich-labels
+```
+
+Backfilled timing uses uniform `frame/fps` spacing (`backfill_uniform_fps`) — good for ms fields in labels, but **new pitches should use `record_clip.py`** for exact capture timing.
 
 For interactive capture (press `r` to clip, `q` to quit):
 
@@ -121,6 +130,17 @@ quality + notes        confidence, estimated crossing, anything odd
 If `data/labels/pitch_001.json` already exists, the labeler **loads and resumes** it so you can fix earlier clicks. Pressing `s` saves progress and prints **validation warnings** for incomplete labels (missing release frame, too few early points, bad frame order, out-of-bounds coordinates). Saving is never blocked.
 
 **Keep the label window at native resolution** while clicking — resizing can skew coordinates.
+
+In **early-point mode (e)**, ball markers show on the **current frame only** so past clicks do not hide the ball. Press **t** to review the full path in target mode. On save, labels include a `timing` block plus `timestamp_ms` on each ball point when a sidecar exists:
+
+```json
+"timing": {
+  "source": "capture_sidecar",
+  "release_timestamp_ms": 3456.789,
+  "cross_timestamp_ms": 4222.456,
+  "release_to_cross_ms": 765.667
+}
+```
 
 Controls:
 

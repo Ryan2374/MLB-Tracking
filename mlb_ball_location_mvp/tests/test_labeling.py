@@ -8,7 +8,8 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from labeling.manual_label_pitch import LabelState, apply_recording_fps_fields
+from labeling.manual_label_pitch import LabelState, apply_recording_fps_fields, format_timestamp_ms
+from timing.sidecar import load_frame_timestamps
 
 
 def test_validation_warnings_incomplete() -> None:
@@ -79,3 +80,40 @@ def test_apply_recording_fps_falls_back_to_container(tmp_path: Path) -> None:
     assert resolved == 60.0
     assert data["fps"] == 60.0
     assert "requested_fps" not in data
+
+
+def test_early_mode_hides_other_frame_markers() -> None:
+    state = LabelState(Path("pitch_001.mp4"), Path("out.json"), 60.0, 1920, 1080)
+    state.mode = "early"
+    state.frame_idx = 102
+    state.data["early_points"] = [
+        {"frame": 101, "x": 10.0, "y": 10.0},
+        {"frame": 102, "x": 20.0, "y": 20.0},
+    ]
+    assert state.should_show_ball_marker(101) is False
+    assert state.should_show_ball_marker(102) is True
+
+
+def test_load_frame_timestamps(tmp_path: Path) -> None:
+    video = tmp_path / "pitch_001.mp4"
+    video.write_bytes(b"")
+    sidecar = tmp_path / "pitch_001.frames.jsonl"
+    sidecar.write_text(
+        '{"frame": 0, "timestamp": 0.0}\n{"frame": 1, "timestamp": 0.016731}\n',
+        encoding="utf-8",
+    )
+    timestamps = load_frame_timestamps(video)
+    assert timestamps[1] == 0.016731
+    assert format_timestamp_ms(timestamps[1]) == "16.731 ms"
+
+
+def test_add_click_stores_timestamp_ms(tmp_path: Path) -> None:
+    video = tmp_path / "pitch_001.mp4"
+    video.write_bytes(b"")
+    sidecar = tmp_path / "pitch_001.frames.jsonl"
+    sidecar.write_text('{"frame": 5, "timestamp": 0.123456}\n', encoding="utf-8")
+    state = LabelState(video, tmp_path / "out.json", 60.0, 1920, 1080)
+    state.frame_idx = 5
+    state.add_click(100, 200, frame_count=100)
+    point = state.data["early_points"][0]
+    assert point["timestamp_ms"] == 123.456

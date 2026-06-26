@@ -24,6 +24,7 @@ import cv2
 import numpy as np
 
 from coords.calibration import draw_grid, draw_zone, full_frame_metadata, zone_dict_or_none
+from timing.sidecar import enrich_label_timing, load_frame_timestamps, verify_video_sidecars
 
 PITCH_TYPES = [
     "fastball",
@@ -56,8 +57,8 @@ LABEL_CONFIDENCE = ["high", "medium", "low"]
 
 CROSSHAIR_HALF = 14
 MOUSE_HUD_X = 16
-MOUSE_HUD_Y = 28 + 7 * 24
-MOUSE_HUD_W = 300
+MOUSE_HUD_Y = 28 + 9 * 24
+MOUSE_HUD_W = 420
 MOUSE_HUD_H = 26
 
 
@@ -65,7 +66,7 @@ HELP_LINES = [
     "Workflow: r=release | e=ball points | t=target | s=save | q=quit",
     "n/p or arrows: next/prev | j/k: +/-10 | space: play/pause | f: next gap",
     "Metadata: [/]=pitch type | ;/'=zone | ,/.=location | m=confidence | b=est. cross | i=notes",
-    "v: all-frame markers | g: grid | z: zone box | u: undo | c: coords | h: help",
+    "v: all-frame ball markers (target mode review) | g: grid | z: zone box | u: undo | c: coords | h: help",
 ]
 
 ARROW_LEFT = {2424832, 81, 2}
@@ -89,6 +90,30 @@ def cycle_option(options: list[str], current: str, direction: int) -> str:
 
 def meta_sidecar_path(video_path: Path) -> Path:
     return video_path.with_suffix(".meta.json")
+
+
+def frames_sidecar_path(video_path: Path) -> Path:
+    return video_path.with_suffix(".frames.jsonl")
+
+
+def resolve_sidecar_video(video_path: Path) -> Path:
+    candidates = [video_path.resolve(), (Path.cwd() / video_path).resolve()]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return video_path
+
+
+def format_timestamp_ms(seconds: Optional[float]) -> str:
+    if seconds is None:
+        return "n/a"
+    return f"{seconds * 1000.0:.3f} ms"
+
+
+def format_timestamp_s(seconds: Optional[float]) -> str:
+    if seconds is None:
+        return "n/a"
+    return f"{seconds:.6f} s"
 
 
 def resolve_meta_sidecar(video_path: Path) -> Optional[dict[str, Any]]:
@@ -164,6 +189,7 @@ class LabelState:
         self.mouse_x: Optional[int] = None
         self.mouse_y: Optional[int] = None
         self.needs_redraw = True
+        self.frame_timestamps = load_frame_timestamps(video_path)
         self.data: dict[str, Any] = {
             **full_frame_metadata(frame_width, frame_height),
             "pitch_id": video_path.stem,
@@ -184,6 +210,32 @@ class LabelState:
             "notes": "",
         }
         apply_recording_fps_fields(self.data, video_path, container_fps=fps)
+
+    def frame_timestamp_s(self, frame_idx: int) -> Optional[float]:
+        return self.frame_timestamps.get(int(frame_idx))
+
+    def frame_timestamp_ms(self, frame_idx: int) -> Optional[float]:
+        ts = self.frame_timestamp_s(frame_idx)
+        if ts is None:
+            return None
+        return ts * 1000.0
+
+    def delta_timestamp_ms(self, frame_idx: int, reference_frame: Optional[int]) -> Optional[float]:
+        if reference_frame is None:
+            return None
+        current = self.frame_timestamp_ms(frame_idx)
+        ref = self.frame_timestamp_ms(reference_frame)
+        if current is None or ref is None:
+            return None
+        return current - ref
+
+    def should_show_ball_marker(self, point_frame: int) -> bool:
+        """In early-point mode, only the current frame marker is shown so past clicks do not hide the ball."""
+        if self.mode == "early":
+            return int(point_frame) == int(self.frame_idx)
+        if self.show_all_points:
+            return True
+        return int(point_frame) == int(self.frame_idx)
 
     def labeled_frames(self) -> set[int]:
         return {int(p["frame"]) for p in self.data["early_points"]}
@@ -282,6 +334,7 @@ class LabelState:
         if "notes" not in self.data:
             self.data["notes"] = ""
         apply_recording_fps_fields(self.data, self.video_path, container_fps=float(self.data.get("fps") or 0))
+        self.frame_timestamps = load_frame_timestamps(self.video_path)
         release = self.data.get("release_frame")
         if release is not None:
             self.frame_idx = int(release)
@@ -325,6 +378,9 @@ class LabelState:
             if release is not None and self.frame_idx <= int(release):
                 print("Warning: ball point should be after release_frame")
             point = {"frame": int(self.frame_idx), "x": float(x), "y": float(y)}
+            ts_ms = self.frame_timestamp_ms(self.frame_idx)
+            if ts_ms is not None:
+                point["timestamp_ms"] = round(ts_ms, 3)
             points = self.data["early_points"]
             replaced = False
             for i, existing in enumerate(points):
@@ -377,6 +433,23 @@ class LabelState:
             print("WARNING: label may be incomplete:")
             for warning in warnings:
                 print(f" - {warning}")
+
+        self.frame_timestamps = load_frame_timestamps(self.video_path)
+        enrich_label_timing(self.data, self.video_path)
+
+        timing = self.data.get("timing", {})
+        if timing.get("source") == "missing":
+            print(
+                "WARNING: no .frames.jsonl sidecar — timing is frame/fps estimate only. "
+                "Run: python scripts/backfill_timing_sidecars.py --video "
+                f"{self.video_path}"
+            )
+        elif timing.get("release_to_cross_ms") is not None:
+            print(
+                f"Timing: release→cross {timing['release_to_cross_ms']:.3f} ms "
+                f"(source={timing.get('source')})"
+            )
+
         self.out_path.parent.mkdir(parents=True, exist_ok=True)
         with self.out_path.open("w", encoding="utf-8") as f:
             json.dump(self.data, f, indent=2)
@@ -400,6 +473,8 @@ def base_overlay_key(state: LabelState) -> tuple[Any, ...]:
         state.show_help,
         state.mode,
         state.data.get("release_frame"),
+        state.show_all_points,
+        tuple(sorted(state.frame_timestamps.items())[:3]),  # cache bust if sidecar reloads
         tuple((int(p["frame"]), float(p["x"]), float(p["y"])) for p in points),
         target.get("cross_frame"),
         target.get("cross_x"),
@@ -422,14 +497,14 @@ def render_base_overlay(frame, state: LabelState):
 
     for idx, p in enumerate(state.data["early_points"], start=1):
         point_frame = int(p["frame"])
-        if not state.show_all_points and point_frame != state.frame_idx:
+        if not state.should_show_ball_marker(point_frame):
             continue
         x, y = int(round(p["x"])), int(round(p["y"]))
         cv2.circle(img, (x, y), 7, (0, 255, 255), 2)
         draw_text(img, str(idx), x + 8, y - 8, scale=0.45)
 
     pts = state.data["early_points"]
-    if state.show_all_points and len(pts) >= 2:
+    if state.mode != "early" and state.show_all_points and len(pts) >= 2:
         poly = [(int(round(p["x"])), int(round(p["y"]))) for p in pts]
         cv2.polylines(img, [np.array(poly, dtype=np.int32)], isClosed=False, color=(0, 255, 255), thickness=1)
 
@@ -459,12 +534,33 @@ def render_base_overlay(frame, state: LabelState):
     target_status = "set" if state.target_set() else "not set"
     missing = state.missing_frame_count()
     quality = state.data.get("quality", {})
+    current_ts = state.frame_timestamp_s(state.frame_idx)
+    release = state.data.get("release_frame")
+    release_ts_line = ""
+    if current_ts is not None:
+        release_ts_line = f"time: {format_timestamp_s(current_ts)} ({format_timestamp_ms(current_ts)})"
+        delta_release = state.delta_timestamp_ms(state.frame_idx, int(release) if release is not None else None)
+        if delta_release is not None:
+            release_ts_line += f"  Δrelease: {delta_release:.3f} ms"
+        if state.data["early_points"]:
+            first_ball_frame = int(state.data["early_points"][0]["frame"])
+            delta_first = state.delta_timestamp_ms(state.frame_idx, first_ball_frame)
+            if delta_first is not None:
+                release_ts_line += f"  Δball1: {delta_first:.3f} ms"
+    elif state.data.get("fps"):
+        approx_s = float(state.frame_idx) / float(state.data["fps"])
+        release_ts_line = f"time (approx): {format_timestamp_s(approx_s)} ({format_timestamp_ms(approx_s)})"
+
+    marker_mode = "current frame only" if state.mode == "early" else (
+        "all frames" if state.show_all_points else "current frame only"
+    )
 
     top = [
         f"Frame: {state.frame_idx}",
+        release_ts_line or "time: n/a (no .frames.jsonl sidecar)",
         f"Mode: {mode_label}",
         f"Ball points: {len(state.data['early_points'])} (label every visible frame)",
-        f"Markers: {'all frames' if state.show_all_points else 'current frame only'}",
+        f"Ball markers: {marker_mode}",
         f"Target: {target_status}",
         f"release_frame: {release}",
         f"cross_frame: {target_frame}",
@@ -595,8 +691,10 @@ def handle_key(
         state.data["release_frame"] = int(state.frame_idx)
     elif key == ord("e"):
         state.mode = "early"
+        state.show_all_points = False
     elif key == ord("t"):
         state.mode = "target"
+        state.show_all_points = True
     elif key == ord("u"):
         state.undo()
     elif key == ord("g"):
@@ -604,7 +702,10 @@ def handle_key(
     elif key == ord("z"):
         state.show_zone = not state.show_zone
     elif key == ord("v"):
-        state.show_all_points = not state.show_all_points
+        if state.mode == "early":
+            print("Ball markers stay on the current frame only in early-point mode (press t to review all points).")
+        else:
+            state.show_all_points = not state.show_all_points
     elif key == ord("c"):
         state.show_coords = not state.show_coords
     elif key == ord("s"):
@@ -729,9 +830,20 @@ def main() -> None:
     window = "manual_pitch_label"
     cv2.namedWindow(window, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(window, frame_width, frame_height)
+    if state.frame_timestamps:
+        print(f"Loaded {len(state.frame_timestamps)} exact frame timestamps from sidecar")
+    else:
+        sidecar_report = verify_video_sidecars(video_path)
+        print(
+            "No timing sidecar found. For exact ms timing, record with capture/record_clip.py "
+            "or run: python scripts/backfill_timing_sidecars.py "
+            f"--video {video_path}"
+        )
+        if sidecar_report.get("status") == "frame_count_mismatch":
+            print("WARNING: existing sidecar frame count does not match MP4 — re-record or backfill.")
     print(
-        "Label at native resolution. Avoid resizing the window while clicking — "
-        "coordinates map to full-frame pixels."
+        "Early-point mode shows the ball marker on the current frame only. "
+        "Press t to review the full path in target mode."
     )
 
     def on_mouse(event, x, y, flags, userdata):  # noqa: ANN001, ARG001

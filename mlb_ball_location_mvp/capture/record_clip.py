@@ -132,6 +132,7 @@ def write_sidecars(
         "width": width,
         "height": height,
         "duration_s": round(actual_duration, 3),
+        "timing_source": "capture_sidecar",
     }
     with meta_path.open("w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
