@@ -728,6 +728,11 @@ def main() -> None:
 
     window = "manual_pitch_label"
     cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(window, frame_width, frame_height)
+    print(
+        "Label at native resolution. Avoid resizing the window while clicking — "
+        "coordinates map to full-frame pixels."
+    )
 
     def on_mouse(event, x, y, flags, userdata):  # noqa: ANN001, ARG001
         state.mouse_x = int(x)

@@ -84,6 +84,14 @@ data/raw/pitch_001.frames.jsonl
 data/raw/pitch_001.meta.json
 ```
 
+The recorder warms up the device, measures actual capture FPS, and writes the MP4 at that rate so **encoded frame count matches the sidecar**. Check `frames_in_sync` in `.meta.json`. If capture runs below requested FPS (common at 1080p), you'll see a warning — labels still use **frame numbers from the video**.
+
+For interactive capture (press `r` to clip, `q` to quit):
+
+```bash
+python capture/record_clip.py --device 0 --preview-only --clip-seconds 6
+```
+
 You can also use OBS or your capture software. Just place clips in `data/raw/`.
 
 ## Step 3: Label one pitch
@@ -111,6 +119,8 @@ quality + notes        confidence, estimated crossing, anything odd
 ```
 
 If `data/labels/pitch_001.json` already exists, the labeler **loads and resumes** it so you can fix earlier clicks. Pressing `s` saves progress and prints **validation warnings** for incomplete labels (missing release frame, too few early points, bad frame order, out-of-bounds coordinates). Saving is never blocked.
+
+**Keep the label window at native resolution** while clicking — resizing can skew coordinates.
 
 Controls:
 
@@ -257,6 +267,8 @@ Optional later fields:
 ```
 
 ## Step 4: Evaluate labeled pitches
+
+`--labels data/labels` loads real pitch JSON files only — it **ignores** `example_*.json` (schema sample lives in `data/examples/`).
 
 Once you have at least a few labels, sweep how early you can predict:
 

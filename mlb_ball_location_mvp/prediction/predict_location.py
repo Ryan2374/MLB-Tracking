@@ -101,8 +101,15 @@ def load_label(path: Path) -> PitchLabel:
 
 def iter_label_paths(labels_dir: Path) -> list[Path]:
     paths = sorted(p for p in labels_dir.rglob("*.json") if p.is_file())
-    # Ignore prediction/evaluation JSON files accidentally placed nearby.
-    return [p for p in paths if not p.name.endswith("_prediction.json") and not p.name.endswith("_eval.json")]
+    # Ignore prediction/evaluation JSON and schema examples accidentally placed nearby.
+    return [
+        p
+        for p in paths
+        if not p.name.endswith("_prediction.json")
+        and not p.name.endswith("_eval.json")
+        and not p.name.startswith("example_")
+        and not p.name.startswith("eval_")
+    ]
 
 
 def load_labels(labels_dir: Path) -> list[PitchLabel]:

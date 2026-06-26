@@ -14,3 +14,4 @@ mlb_ball_location_mvp/data/raw/*.frames.jsonl
 mlb_ball_location_mvp/data/raw/*.meta.json
 mlb_ball_location_mvp/data/predictions/*.json
 mlb_ball_location_mvp/data/labels/synthetic/
+!mlb_ball_location_mvp/data/examples/
