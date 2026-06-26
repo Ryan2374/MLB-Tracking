@@ -97,6 +97,19 @@ python labeling/manual_label_pitch.py \
   --location-bucket middle
 ```
 
+### What to label per pitch
+
+```text
+release_frame          last frame before first free-flight ball click
+early_points           every visible ball position after release (full flight path)
+target.cross_frame     frame at plate/strike-zone crossing
+target.cross_x/y       ball center at crossing (not catcher glove)
+pitch_type             fastball, slider, curveball, etc.
+zone_result            strike, borderline, ball, unknown
+location_bucket        middle, high, low, inside, outside, etc.
+quality + notes        confidence, estimated crossing, anything odd
+```
+
 If `data/labels/pitch_001.json` already exists, the labeler **loads and resumes** it so you can fix earlier clicks. Pressing `s` saves progress and prints **validation warnings** for incomplete labels (missing release frame, too few early points, bad frame order, out-of-bounds coordinates). Saving is never blocked.
 
 Controls:
@@ -117,13 +130,49 @@ h         toggle help
 q         quit
 ```
 
-The labeler shows frame number, mode, early-point count, target status, release/cross frames, and live mouse `x/y` in full-frame pixels.
+On GOAT (~10 frames release to plate), click **every visible ball frame** after release.
+The prediction script still uses only the first `--n-points 3/5/7` later.
 
-Labeling target:
+### Labeling checklist
 
-- Mark `release_frame` as the frame where the ball leaves the pitcher's hand.
-- Add the first 5-10 visible ball center points after release.
-- Mark the final crossing point at the hitting/strike-zone plane. For the MVP, this is a 2D screen coordinate: `cross_x`, `cross_y`.
+```text
+1. Find frame right before/at release -> press r
+2. First frame with ball free from hand -> press e, click ball center
+3. Click ball center on every visible frame until plate (auto-advances each click)
+4. At crossing frame -> press t, click ball center at strike-zone plane
+5. Set pitch_type ([/]), zone_result (;/'), location_bucket (,.)
+6. m=confidence, b=toggle estimated crossing, i=notes in terminal
+7. Press s to save
+```
+
+### Key controls
+
+```text
+n/p or arrows   next / previous frame
+j/k             jump +/- 10 frames
+space           play/pause scrub
+f               jump to next unlabeled ball frame
+r               set release_frame
+e               ball-point mode
+t               target-crossing mode
+left click      add point (auto-advances in ball mode)
+v               toggle current-frame-only markers (default) vs all frames
+[/]             pitch type
+;/'             zone result
+,.              location bucket
+m               label confidence
+b               toggle crossing_estimated
+i               edit notes (terminal prompt)
+s               save
+q               quit
+```
+
+Consistency rules:
+
+- Click **center of ball**, not trail/glow.
+- `release_frame` is before the first free-flight click.
+- Crossing is plate/zone plane, not catcher glove.
+- Skip frames where the ball is hidden instead of guessing.
 
 ## Coordinate calibration (first milestone)
 
@@ -152,34 +201,43 @@ PCI/stick calibration is a separate later step (screen pixel → controller stic
 
 ```json
 {
+  "pitch_id": "pitch_001",
+  "video": "data/raw/pitch_001.mp4",
   "frame_width": 1920,
   "frame_height": 1080,
   "coordinate_space": "full_frame_pixels",
   "origin": "top_left",
   "x_direction": "right",
   "y_direction": "down",
-  "pitch_id": "pitch_001",
-  "video": "data/raw/pitch_001.mp4",
   "fps": 60.0,
-  "release_frame": 128,
+  "difficulty": "GOAT",
+  "pitch_type": "fastball",
+  "zone_result": "strike",
+  "location_bucket": "middle",
+  "release_frame": 100,
   "early_points": [
-    {"frame": 129, "x": 421.0, "y": 210.0},
-    {"frame": 130, "x": 432.0, "y": 214.0},
-    {"frame": 131, "x": 443.0, "y": 220.0},
-    {"frame": 132, "x": 455.0, "y": 228.0},
-    {"frame": 133, "x": 466.0, "y": 238.0}
+    {"frame": 101, "x": 421.0, "y": 210.0},
+    {"frame": 102, "x": 433.0, "y": 216.0},
+    {"frame": 103, "x": 446.0, "y": 224.0}
   ],
   "target": {
-    "cross_frame": 154,
-    "cross_x": 560.0,
+    "cross_frame": 110,
+    "cross_x": 558.0,
     "cross_y": 412.0
   },
   "pitch_type": "fastball",
   "zone_result": "strike",
   "location_bucket": "middle",
+  "quality": {
+    "ball_visible": true,
+    "crossing_estimated": false,
+    "label_confidence": "high"
+  }
   "notes": ""
 }
 ```
+
+`early_points` holds the **full observed flight path**. Prediction uses only the first N points via `--n-points`.
 
 Optional later fields:
 
@@ -200,9 +258,12 @@ Optional later fields:
 
 ## Step 4: Evaluate labeled pitches
 
-Once you have at least a few labels:
+Once you have at least a few labels, sweep how early you can predict:
 
 ```bash
+python prediction/predict_location.py --labels data/labels --n-points 3 --method velocity --out data/predictions/eval_n3.json
+python prediction/predict_location.py --labels data/labels --n-points 5 --method velocity --out data/predictions/eval_n5.json
+python prediction/predict_location.py --labels data/labels --n-points 7 --method velocity --out data/predictions/eval_n7.json
 python prediction/predict_location.py --labels data/labels --n-points 5 --method velocity --poly-degree 1 --out data/predictions/eval_velocity.json
 ```
 
