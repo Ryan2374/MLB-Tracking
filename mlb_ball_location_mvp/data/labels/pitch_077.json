@@ -1,0 +1,218 @@
+{
+  "frame_width": 1920,
+  "frame_height": 1080,
+  "coordinate_space": "full_frame_pixels",
+  "origin": "top_left",
+  "x_direction": "right",
+  "y_direction": "down",
+  "pitch_id": "pitch_077",
+  "video": "data\\raw\\pitch_077.mp4",
+  "fps": 50.44,
+  "difficulty": "GOAT",
+  "pitch_type": "fastball",
+  "zone_result": "strike",
+  "location_bucket": "low_middle",
+  "review_status": "verified",
+  "release_frame": 26,
+  "early_points": [
+    {
+      "frame": 27,
+      "x": 866.0,
+      "y": 401.0,
+      "timestamp_ms": 579.274
+    },
+    {
+      "frame": 28,
+      "x": 867.0,
+      "y": 402.0,
+      "timestamp_ms": 599.357
+    },
+    {
+      "frame": 29,
+      "x": 868.0,
+      "y": 402.0,
+      "timestamp_ms": 622.531
+    },
+    {
+      "frame": 30,
+      "x": 869.0,
+      "y": 402.0,
+      "timestamp_ms": 643.314
+    },
+    {
+      "frame": 31,
+      "x": 870.0,
+      "y": 403.0,
+      "timestamp_ms": 665.594
+    },
+    {
+      "frame": 32,
+      "x": 871.0,
+      "y": 403.0,
+      "timestamp_ms": 685.467
+    },
+    {
+      "frame": 33,
+      "x": 872.0,
+      "y": 405.0,
+      "timestamp_ms": 710.617
+    },
+    {
+      "frame": 34,
+      "x": 873.0,
+      "y": 405.0,
+      "timestamp_ms": 734.806
+    },
+    {
+      "frame": 35,
+      "x": 875.0,
+      "y": 407.0,
+      "timestamp_ms": 759.382
+    },
+    {
+      "frame": 36,
+      "x": 876.0,
+      "y": 408.0,
+      "timestamp_ms": 791.694
+    },
+    {
+      "frame": 37,
+      "x": 877.0,
+      "y": 410.0,
+      "timestamp_ms": 814.755
+    },
+    {
+      "frame": 38,
+      "x": 879.0,
+      "y": 412.0,
+      "timestamp_ms": 836.806
+    },
+    {
+      "frame": 39,
+      "x": 881.0,
+      "y": 414.0,
+      "timestamp_ms": 861.191
+    },
+    {
+      "frame": 40,
+      "x": 882.0,
+      "y": 417.0,
+      "timestamp_ms": 885.182
+    },
+    {
+      "frame": 41,
+      "x": 883.0,
+      "y": 421.0,
+      "timestamp_ms": 905.897
+    },
+    {
+      "frame": 42,
+      "x": 885.0,
+      "y": 424.0,
+      "timestamp_ms": 928.23
+    },
+    {
+      "frame": 43,
+      "x": 887.0,
+      "y": 430.0,
+      "timestamp_ms": 948.805
+    },
+    {
+      "frame": 44,
+      "x": 889.0,
+      "y": 435.0,
+      "timestamp_ms": 969.773
+    },
+    {
+      "frame": 45,
+      "x": 891.0,
+      "y": 441.0,
+      "timestamp_ms": 993.885
+    },
+    {
+      "frame": 46,
+      "x": 894.0,
+      "y": 449.0,
+      "timestamp_ms": 1013.003
+    },
+    {
+      "frame": 47,
+      "x": 896.0,
+      "y": 458.0,
+      "timestamp_ms": 1031.079
+    },
+    {
+      "frame": 48,
+      "x": 899.0,
+      "y": 468.0,
+      "timestamp_ms": 1058.684
+    },
+    {
+      "frame": 49,
+      "x": 903.0,
+      "y": 480.0,
+      "timestamp_ms": 1078.068
+    },
+    {
+      "frame": 50,
+      "x": 908.0,
+      "y": 497.0,
+      "timestamp_ms": 1096.542
+    },
+    {
+      "frame": 51,
+      "x": 913.0,
+      "y": 518.0,
+      "timestamp_ms": 1115.394
+    },
+    {
+      "frame": 52,
+      "x": 920.0,
+      "y": 546.0,
+      "timestamp_ms": 1134.348
+    },
+    {
+      "frame": 53,
+      "x": 928.0,
+      "y": 583.0,
+      "timestamp_ms": 1152.731
+    },
+    {
+      "frame": 54,
+      "x": 940.0,
+      "y": 635.0,
+      "timestamp_ms": 1171.314
+    },
+    {
+      "frame": 55,
+      "x": 957.0,
+      "y": 714.0,
+      "timestamp_ms": 1190.916
+    }
+  ],
+  "target": {
+    "cross_frame": 56,
+    "cross_x": 970.0,
+    "cross_y": 776.0,
+    "cross_timestamp_ms": 1208.602
+  },
+  "quality": {
+    "ball_visible": true,
+    "crossing_estimated": false,
+    "label_confidence": "high"
+  },
+  "notes": "",
+  "requested_fps": 60.0,
+  "container_fps": 58.03,
+  "timing": {
+    "source": "capture_sidecar",
+    "release_frame": 26,
+    "cross_frame": 56,
+    "release_timestamp_ms": 560.34,
+    "cross_timestamp_ms": 1208.602,
+    "release_to_cross_ms": 648.262,
+    "sidecar_frame_count": 272,
+    "capture_fps_measured": 58.03,
+    "frames_in_sync": true
+  }
+}

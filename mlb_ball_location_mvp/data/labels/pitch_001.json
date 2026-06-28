@@ -80,6 +80,7 @@
   "pitch_type": "fastball",
   "zone_result": "strike",
   "location_bucket": "middle",
+  "review_status": "missing_video_unverified",
   "notes": "",
   "requested_fps": 60.0,
   "container_fps": 60.0,

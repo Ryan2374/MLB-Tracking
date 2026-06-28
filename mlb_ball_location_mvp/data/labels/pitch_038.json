@@ -1,0 +1,103 @@
+{
+  "frame_width": 1920,
+  "frame_height": 1080,
+  "coordinate_space": "full_frame_pixels",
+  "origin": "top_left",
+  "x_direction": "right",
+  "y_direction": "down",
+  "pitch_id": "pitch_038",
+  "video": "data\\raw\\pitch_038.mp4",
+  "fps": 25.95,
+  "difficulty": "GOAT",
+  "pitch_type": "fastball",
+  "zone_result": "strike",
+  "location_bucket": "middle",
+  "release_frame": 15,
+  "early_points": [
+    {
+      "frame": 16,
+      "x": 868.0,
+      "y": 400.0,
+      "timestamp_ms": 664.751
+    },
+    {
+      "frame": 17,
+      "x": 869.0,
+      "y": 399.0,
+      "timestamp_ms": 702.495
+    },
+    {
+      "frame": 18,
+      "x": 872.0,
+      "y": 399.0,
+      "timestamp_ms": 740.124
+    },
+    {
+      "frame": 19,
+      "x": 874.0,
+      "y": 399.0,
+      "timestamp_ms": 780.48
+    },
+    {
+      "frame": 20,
+      "x": 877.0,
+      "y": 400.0,
+      "timestamp_ms": 819.856
+    },
+    {
+      "frame": 21,
+      "x": 880.0,
+      "y": 402.0,
+      "timestamp_ms": 856.855
+    },
+    {
+      "frame": 22,
+      "x": 886.0,
+      "y": 407.0,
+      "timestamp_ms": 895.537
+    },
+    {
+      "frame": 23,
+      "x": 891.0,
+      "y": 411.0,
+      "timestamp_ms": 933.159
+    },
+    {
+      "frame": 24,
+      "x": 898.0,
+      "y": 420.0,
+      "timestamp_ms": 990.145
+    },
+    {
+      "frame": 25,
+      "x": 915.0,
+      "y": 445.0,
+      "timestamp_ms": 1026.059
+    }
+  ],
+  "target": {
+    "cross_frame": 26,
+    "cross_x": 980.0,
+    "cross_y": 550.0,
+    "cross_timestamp_ms": 1059.253
+  },
+  "quality": {
+    "ball_visible": true,
+    "crossing_estimated": false,
+    "label_confidence": "high"
+  },
+  "notes": "",
+  "requested_fps": 60.0,
+  "container_fps": 57.95,
+  "timing": {
+    "source": "capture_sidecar",
+    "release_frame": 15,
+    "cross_frame": 26,
+    "release_timestamp_ms": 611.19,
+    "cross_timestamp_ms": 1059.253,
+    "release_to_cross_ms": 448.063,
+    "sidecar_frame_count": 185,
+    "capture_fps_measured": 57.95,
+    "frames_in_sync": true
+  }
+}

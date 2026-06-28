@@ -1,0 +1,218 @@
+{
+  "frame_width": 1920,
+  "frame_height": 1080,
+  "coordinate_space": "full_frame_pixels",
+  "origin": "top_left",
+  "x_direction": "right",
+  "y_direction": "down",
+  "pitch_id": "pitch_096",
+  "video": "data\\raw\\pitch_096.mp4",
+  "fps": 52.18,
+  "difficulty": "GOAT",
+  "pitch_type": "fastball",
+  "zone_result": "ball",
+  "location_bucket": "outside_middle",
+  "review_status": "verified",
+  "release_frame": 48,
+  "early_points": [
+    {
+      "frame": 49,
+      "x": 866.0,
+      "y": 402.0,
+      "timestamp_ms": 1044.675
+    },
+    {
+      "frame": 50,
+      "x": 866.0,
+      "y": 401.0,
+      "timestamp_ms": 1062.464
+    },
+    {
+      "frame": 51,
+      "x": 866.0,
+      "y": 400.0,
+      "timestamp_ms": 1084.002
+    },
+    {
+      "frame": 52,
+      "x": 866.0,
+      "y": 400.0,
+      "timestamp_ms": 1103.095
+    },
+    {
+      "frame": 53,
+      "x": 865.0,
+      "y": 400.0,
+      "timestamp_ms": 1120.293
+    },
+    {
+      "frame": 54,
+      "x": 865.0,
+      "y": 400.0,
+      "timestamp_ms": 1138.877
+    },
+    {
+      "frame": 55,
+      "x": 864.0,
+      "y": 400.0,
+      "timestamp_ms": 1160.286
+    },
+    {
+      "frame": 56,
+      "x": 864.0,
+      "y": 400.0,
+      "timestamp_ms": 1178.403
+    },
+    {
+      "frame": 57,
+      "x": 864.0,
+      "y": 400.0,
+      "timestamp_ms": 1195.986
+    },
+    {
+      "frame": 58,
+      "x": 863.0,
+      "y": 401.0,
+      "timestamp_ms": 1213.42
+    },
+    {
+      "frame": 59,
+      "x": 862.0,
+      "y": 401.0,
+      "timestamp_ms": 1229.889
+    },
+    {
+      "frame": 60,
+      "x": 862.0,
+      "y": 402.0,
+      "timestamp_ms": 1259.122
+    },
+    {
+      "frame": 61,
+      "x": 861.0,
+      "y": 403.0,
+      "timestamp_ms": 1278.67
+    },
+    {
+      "frame": 62,
+      "x": 860.0,
+      "y": 404.0,
+      "timestamp_ms": 1298.905
+    },
+    {
+      "frame": 63,
+      "x": 859.0,
+      "y": 405.0,
+      "timestamp_ms": 1318.384
+    },
+    {
+      "frame": 64,
+      "x": 857.0,
+      "y": 407.0,
+      "timestamp_ms": 1337.518
+    },
+    {
+      "frame": 65,
+      "x": 856.0,
+      "y": 409.0,
+      "timestamp_ms": 1355.482
+    },
+    {
+      "frame": 66,
+      "x": 855.0,
+      "y": 411.0,
+      "timestamp_ms": 1377.622
+    },
+    {
+      "frame": 67,
+      "x": 852.0,
+      "y": 414.0,
+      "timestamp_ms": 1398.655
+    },
+    {
+      "frame": 68,
+      "x": 849.0,
+      "y": 418.0,
+      "timestamp_ms": 1423.724
+    },
+    {
+      "frame": 69,
+      "x": 846.0,
+      "y": 422.0,
+      "timestamp_ms": 1448.459
+    },
+    {
+      "frame": 70,
+      "x": 843.0,
+      "y": 429.0,
+      "timestamp_ms": 1472.256
+    },
+    {
+      "frame": 71,
+      "x": 839.0,
+      "y": 436.0,
+      "timestamp_ms": 1499.974
+    },
+    {
+      "frame": 72,
+      "x": 835.0,
+      "y": 444.0,
+      "timestamp_ms": 1533.992
+    },
+    {
+      "frame": 73,
+      "x": 827.0,
+      "y": 455.0,
+      "timestamp_ms": 1560.07
+    },
+    {
+      "frame": 74,
+      "x": 820.0,
+      "y": 470.0,
+      "timestamp_ms": 1582.111
+    },
+    {
+      "frame": 75,
+      "x": 809.0,
+      "y": 491.0,
+      "timestamp_ms": 1601.919
+    },
+    {
+      "frame": 76,
+      "x": 793.0,
+      "y": 517.0,
+      "timestamp_ms": 1618.315
+    },
+    {
+      "frame": 77,
+      "x": 771.0,
+      "y": 560.0,
+      "timestamp_ms": 1634.596
+    }
+  ],
+  "target": {
+    "cross_frame": 78,
+    "cross_x": 743.0,
+    "cross_y": 609.0,
+    "cross_timestamp_ms": 1651.749
+  },
+  "quality": {
+    "ball_visible": true,
+    "crossing_estimated": false,
+    "label_confidence": "high"
+  },
+  "notes": "",
+  "requested_fps": 60.0,
+  "container_fps": 57.99,
+  "timing": {
+    "source": "capture_sidecar",
+    "release_frame": 48,
+    "cross_frame": 78,
+    "release_timestamp_ms": 1027.894,
+    "cross_timestamp_ms": 1651.749,
+    "release_to_cross_ms": 623.855,
+    "sidecar_frame_count": 272,
+    "capture_fps_measured": 57.99,
+    "frames_in_sync": true
+  }
+}

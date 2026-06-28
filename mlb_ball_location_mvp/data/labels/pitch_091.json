@@ -1,0 +1,206 @@
+{
+  "frame_width": 1920,
+  "frame_height": 1080,
+  "coordinate_space": "full_frame_pixels",
+  "origin": "top_left",
+  "x_direction": "right",
+  "y_direction": "down",
+  "pitch_id": "pitch_091",
+  "video": "data\\raw\\pitch_091.mp4",
+  "fps": 57.55,
+  "difficulty": "GOAT",
+  "pitch_type": "fastball",
+  "zone_result": "ball",
+  "location_bucket": "inside_low",
+  "review_status": "verified",
+  "release_frame": 48,
+  "early_points": [
+    {
+      "frame": 49,
+      "x": 868.0,
+      "y": 401.0,
+      "timestamp_ms": 934.424
+    },
+    {
+      "frame": 50,
+      "x": 870.0,
+      "y": 401.0,
+      "timestamp_ms": 951.125
+    },
+    {
+      "frame": 51,
+      "x": 871.0,
+      "y": 401.0,
+      "timestamp_ms": 969.545
+    },
+    {
+      "frame": 52,
+      "x": 872.0,
+      "y": 401.0,
+      "timestamp_ms": 985.936
+    },
+    {
+      "frame": 53,
+      "x": 875.0,
+      "y": 401.0,
+      "timestamp_ms": 1002.245
+    },
+    {
+      "frame": 54,
+      "x": 876.0,
+      "y": 402.0,
+      "timestamp_ms": 1017.827
+    },
+    {
+      "frame": 55,
+      "x": 878.0,
+      "y": 402.0,
+      "timestamp_ms": 1034.908
+    },
+    {
+      "frame": 56,
+      "x": 881.0,
+      "y": 403.0,
+      "timestamp_ms": 1050.969
+    },
+    {
+      "frame": 57,
+      "x": 883.0,
+      "y": 404.0,
+      "timestamp_ms": 1067.59
+    },
+    {
+      "frame": 58,
+      "x": 886.0,
+      "y": 405.0,
+      "timestamp_ms": 1083.702
+    },
+    {
+      "frame": 59,
+      "x": 889.0,
+      "y": 406.0,
+      "timestamp_ms": 1099.61
+    },
+    {
+      "frame": 60,
+      "x": 893.0,
+      "y": 407.0,
+      "timestamp_ms": 1122.835
+    },
+    {
+      "frame": 61,
+      "x": 896.0,
+      "y": 409.0,
+      "timestamp_ms": 1141.667
+    },
+    {
+      "frame": 62,
+      "x": 900.0,
+      "y": 411.0,
+      "timestamp_ms": 1157.785
+    },
+    {
+      "frame": 63,
+      "x": 905.0,
+      "y": 413.0,
+      "timestamp_ms": 1173.655
+    },
+    {
+      "frame": 64,
+      "x": 910.0,
+      "y": 415.0,
+      "timestamp_ms": 1189.845
+    },
+    {
+      "frame": 65,
+      "x": 916.0,
+      "y": 419.0,
+      "timestamp_ms": 1206.213
+    },
+    {
+      "frame": 66,
+      "x": 922.0,
+      "y": 423.0,
+      "timestamp_ms": 1226.043
+    },
+    {
+      "frame": 67,
+      "x": 930.0,
+      "y": 428.0,
+      "timestamp_ms": 1242.946
+    },
+    {
+      "frame": 68,
+      "x": 939.0,
+      "y": 434.0,
+      "timestamp_ms": 1261.816
+    },
+    {
+      "frame": 69,
+      "x": 950.0,
+      "y": 441.0,
+      "timestamp_ms": 1279.596
+    },
+    {
+      "frame": 70,
+      "x": 962.0,
+      "y": 449.0,
+      "timestamp_ms": 1296.284
+    },
+    {
+      "frame": 71,
+      "x": 978.0,
+      "y": 461.0,
+      "timestamp_ms": 1313.357
+    },
+    {
+      "frame": 72,
+      "x": 998.0,
+      "y": 475.0,
+      "timestamp_ms": 1338.273
+    },
+    {
+      "frame": 73,
+      "x": 1023.0,
+      "y": 493.0,
+      "timestamp_ms": 1353.694
+    },
+    {
+      "frame": 74,
+      "x": 1055.0,
+      "y": 519.0,
+      "timestamp_ms": 1368.828
+    },
+    {
+      "frame": 75,
+      "x": 1103.0,
+      "y": 556.0,
+      "timestamp_ms": 1384.191
+    }
+  ],
+  "target": {
+    "cross_frame": 76,
+    "cross_x": 1220.0,
+    "cross_y": 646.0,
+    "cross_timestamp_ms": 1399.991
+  },
+  "quality": {
+    "ball_visible": true,
+    "crossing_estimated": false,
+    "label_confidence": "high"
+  },
+  "notes": "",
+  "requested_fps": 60.0,
+  "container_fps": 57.86,
+  "timing": {
+    "source": "capture_sidecar",
+    "release_frame": 48,
+    "cross_frame": 76,
+    "release_timestamp_ms": 917.674,
+    "cross_timestamp_ms": 1399.991,
+    "release_to_cross_ms": 482.317,
+    "sidecar_frame_count": 272,
+    "capture_fps_measured": 57.86,
+    "frames_in_sync": true
+  }
+}

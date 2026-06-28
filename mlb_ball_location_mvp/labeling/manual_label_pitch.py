@@ -199,6 +199,7 @@ class LabelState:
             "pitch_type": "unknown",
             "zone_result": "unknown",
             "location_bucket": "unknown",
+            "review_status": "verified",
             "release_frame": None,
             "early_points": [],
             "target": {
@@ -417,6 +418,7 @@ class LabelState:
         zone_result: Optional[str],
         location_bucket: Optional[str],
         notes: str,
+        review_status: Optional[str] = None,
     ) -> None:
         if pitch_type is not None:
             self.data["pitch_type"] = pitch_type
@@ -424,6 +426,8 @@ class LabelState:
             self.data["zone_result"] = zone_result
         if location_bucket is not None:
             self.data["location_bucket"] = location_bucket
+        if review_status is not None:
+            self.data["review_status"] = review_status
         if notes:
             self.data["notes"] = notes
 
@@ -446,7 +450,7 @@ class LabelState:
             )
         elif timing.get("release_to_cross_ms") is not None:
             print(
-                f"Timing: release→cross {timing['release_to_cross_ms']:.3f} ms "
+                f"Timing: release->cross {timing['release_to_cross_ms']:.3f} ms "
                 f"(source={timing.get('source')})"
             )
 
@@ -765,6 +769,11 @@ def main() -> None:
     parser.add_argument("--pitch-type", help="Pitch metadata, e.g. fastball")
     parser.add_argument("--zone-result", help="Pitch metadata, e.g. strike")
     parser.add_argument("--location-bucket", help="Pitch metadata, e.g. high_inside")
+    parser.add_argument(
+        "--review-status",
+        choices=["verified", "missing_video_unverified", "unreliable_unverified"],
+        help="Label review status for evaluation trust filtering.",
+    )
     parser.add_argument("--notes", default="", help="Freeform notes for this pitch")
     parser.add_argument(
         "--frame-step",
@@ -805,7 +814,13 @@ def main() -> None:
         difficulty=args.difficulty,
     )
     state.min_points = max(1, args.min_points)
-    state.apply_metadata(args.pitch_type, args.zone_result, args.location_bucket, args.notes)
+    state.apply_metadata(
+        args.pitch_type,
+        args.zone_result,
+        args.location_bucket,
+        args.notes,
+        args.review_status,
+    )
     if state.data.get("fps") != container_fps and state.data.get("requested_fps") is not None:
         print(
             f"Using measured fps={state.data['fps']} from sidecar "
