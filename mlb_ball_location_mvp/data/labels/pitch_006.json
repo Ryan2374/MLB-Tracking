@@ -54,12 +54,23 @@
   "target": {
     "cross_frame": 113,
     "cross_x": 962.0,
-    "cross_y": 396.0
+    "cross_y": 396.0,
+    "target_source": "nearest_frame_old"
   },
   "pitch_type": "fastball",
   "zone_result": "strike",
   "location_bucket": "high",
   "notes": "",
   "requested_fps": 60.0,
-  "container_fps": 60.0
+  "container_fps": 60.0,
+  "target_quality": {
+    "target_source": "nearest_frame_old",
+    "confidence": "unknown",
+    "estimated": true,
+    "uncertainty_px": 80.0,
+    "weight": 0.0
+  },
+  "quality": {
+    "crossing_estimated": true
+  }
 }

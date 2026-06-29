@@ -27,11 +27,26 @@ import argparse
 import json
 import math
 import statistics
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional
 
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 import numpy as np
+
+from labeling.target_derivation import (
+    CONFIDENCE_HIGH,
+    CONFIDENCE_LOW,
+    CONFIDENCE_MEDIUM,
+    CONFIDENCE_UNKNOWN,
+    normalize_label_target_fields,
+    meets_min_confidence,
+    target_weight_from_confidence,
+)
 
 # Role-based fastball defaults (see export_fastball_predictions champion roles).
 ACCURACY_CHAMPION_METHOD = "compact_ridge_calibrated"
@@ -86,7 +101,17 @@ class Point:
 class Target:
     cross_x: float
     cross_y: float
-    cross_frame: Optional[int] = None
+    cross_frame: Optional[float] = None
+    target_source: str = "nearest_frame_old"
+
+
+@dataclass(frozen=True)
+class TargetQuality:
+    target_source: str
+    confidence: str
+    estimated: bool
+    uncertainty_px: float
+    weight: float
 
 
 @dataclass(frozen=True)
@@ -98,6 +123,7 @@ class PitchLabel:
     release_frame: Optional[int]
     early_points: tuple[Point, ...]
     target: Target
+    target_quality: TargetQuality
     review_status: str = REVIEW_STATUS_VERIFIED
 
 
@@ -115,6 +141,22 @@ class Prediction:
     n_points: int
     details: dict
     review_status: str = REVIEW_STATUS_VERIFIED
+    target_confidence: str = CONFIDENCE_UNKNOWN
+    target_weight: float = 0.0
+    target_source: str = "nearest_frame_old"
+
+
+def default_target_quality_obj() -> TargetQuality:
+    from labeling.target_derivation import TARGET_SOURCE_NEAREST_FRAME_OLD, default_target_quality
+
+    raw = default_target_quality(TARGET_SOURCE_NEAREST_FRAME_OLD)
+    return TargetQuality(
+        target_source=str(raw["target_source"]),
+        confidence=str(raw["confidence"]),
+        estimated=bool(raw["estimated"]),
+        uncertainty_px=float(raw["uncertainty_px"]),
+        weight=float(raw["weight"]),
+    )
 
 
 def is_trusted_review(review_status: str) -> bool:
@@ -125,9 +167,31 @@ def filter_trusted_predictions(predictions: list[Prediction]) -> list[Prediction
     return [p for p in predictions if is_trusted_review(p.review_status)]
 
 
+def filter_by_min_target_confidence(
+    predictions: list[Prediction],
+    min_confidence: str,
+) -> list[Prediction]:
+    return [p for p in predictions if meets_min_confidence(p.target_confidence, min_confidence)]
+
+
+def parse_target_quality(raw: dict) -> TargetQuality:
+    tq = raw.get("target_quality") or {}
+    confidence = str(tq.get("confidence") or CONFIDENCE_UNKNOWN)
+    source = str(tq.get("target_source") or raw.get("target", {}).get("target_source") or "nearest_frame_old")
+    return TargetQuality(
+        target_source=source,
+        confidence=confidence,
+        estimated=bool(tq.get("estimated", True)),
+        uncertainty_px=float(tq.get("uncertainty_px") or 80.0),
+        weight=float(tq.get("weight") if tq.get("weight") is not None else target_weight_from_confidence(confidence)),
+    )
+
+
 def load_label(path: Path) -> PitchLabel:
     with path.open("r", encoding="utf-8") as f:
         raw = json.load(f)
+
+    normalize_label_target_fields(raw)
 
     if "early_points" not in raw or "target" not in raw:
         raise ValueError(f"{path} is missing early_points or target")
@@ -143,11 +207,15 @@ def load_label(path: Path) -> PitchLabel:
         early.append(Point(frame=int(item["frame"]), x=float(item["x"]), y=float(item["y"])))
     early.sort(key=lambda p: p.frame)
 
+    cross_frame_raw = target_raw.get("cross_frame")
+    cross_frame = float(cross_frame_raw) if cross_frame_raw is not None else None
     target = Target(
         cross_x=float(target_raw["cross_x"]),
         cross_y=float(target_raw["cross_y"]),
-        cross_frame=int(target_raw["cross_frame"]) if target_raw.get("cross_frame") is not None else None,
+        cross_frame=cross_frame,
+        target_source=str(target_raw.get("target_source") or "nearest_frame_old"),
     )
+    target_quality = parse_target_quality(raw)
 
     return PitchLabel(
         path=path,
@@ -157,6 +225,7 @@ def load_label(path: Path) -> PitchLabel:
         release_frame=int(raw["release_frame"]) if raw.get("release_frame") is not None else None,
         early_points=tuple(early),
         target=target,
+        target_quality=target_quality,
         review_status=str(raw.get("review_status") or REVIEW_STATUS_VERIFIED),
     )
 
@@ -199,7 +268,7 @@ def require_points(label: PitchLabel, n_points: int) -> tuple[Point, ...]:
 def time_to_cross_from_release(label: PitchLabel) -> Optional[int]:
     if label.release_frame is None or label.target.cross_frame is None:
         return None
-    return int(label.target.cross_frame - label.release_frame)
+    return int(round(float(label.target.cross_frame) - label.release_frame))
 
 
 def median_time_to_cross(labels: Iterable[PitchLabel]) -> Optional[float]:
@@ -857,6 +926,9 @@ def make_prediction(
         n_points=n_points,
         details=details,
         review_status=label.review_status,
+        target_confidence=label.target_quality.confidence,
+        target_weight=label.target_quality.weight,
+        target_source=label.target_quality.target_source,
     )
 
 
@@ -866,6 +938,9 @@ def prediction_to_dict(pred: Prediction) -> dict:
         "method": pred.method,
         "n_points": pred.n_points,
         "review_status": pred.review_status,
+        "target_confidence": pred.target_confidence,
+        "target_weight": pred.target_weight,
+        "target_source": pred.target_source,
         "predicted_cross": {"x": pred.pred_x, "y": pred.pred_y},
         "actual_cross": {"x": pred.actual_x, "y": pred.actual_y},
         "error_px": pred.error_px,
@@ -934,15 +1009,57 @@ def build_leaderboard(rows: list[dict], metrics: tuple[str, ...] = LEADERBOARD_M
     }
 
 
+def summarize_weighted(predictions: list[Prediction]) -> dict:
+    if not predictions:
+        return {}
+    weights = np.array([max(0.0, p.target_weight) for p in predictions], dtype=float)
+    if float(weights.sum()) <= 0:
+        return summarize(predictions)
+    errors = np.array([p.error_px for p in predictions], dtype=float)
+    x_errors = np.array([abs(p.x_error_px) for p in predictions], dtype=float)
+    y_errors = np.array([abs(p.y_error_px) for p in predictions], dtype=float)
+    total = float(weights.sum())
+    return {
+        "count": int(len(predictions)),
+        "weight_sum": total,
+        "weighted_mean_error_px": float(np.sum(errors * weights) / total),
+        "weighted_mean_abs_x_error_px": float(np.sum(x_errors * weights) / total),
+        "weighted_mean_abs_y_error_px": float(np.sum(y_errors * weights) / total),
+        "median_error_px": float(np.median(errors)),
+    }
+
+
+def summarize_by_target_confidence(predictions: list[Prediction]) -> dict:
+    buckets: dict[str, list[Prediction]] = {}
+    for pred in predictions:
+        buckets.setdefault(pred.target_confidence, []).append(pred)
+    out: dict[str, dict] = {}
+    for name in (CONFIDENCE_HIGH, CONFIDENCE_MEDIUM, CONFIDENCE_LOW, CONFIDENCE_UNKNOWN):
+        if name in buckets:
+            out[name] = summarize(buckets[name])
+            out[name]["count"] = len(buckets[name])
+            out[name]["weight_sum"] = float(sum(p.target_weight for p in buckets[name]))
+    return out
+
+
 def batch_summary_payload(predictions: list[Prediction]) -> dict:
     trusted = filter_trusted_predictions(predictions)
+    trusted_high = filter_by_min_target_confidence(trusted, CONFIDENCE_HIGH)
+    trusted_medium_plus = filter_by_min_target_confidence(trusted, CONFIDENCE_MEDIUM)
     return {
         "summary": summarize(predictions),
         "summary_trusted": summarize(trusted),
+        "summary_trusted_high_confidence": summarize(trusted_high),
+        "summary_trusted_medium_plus_confidence": summarize(trusted_medium_plus),
+        "summary_weighted_trusted": summarize_weighted(trusted),
         "summary_by_location": summarize_by_location(predictions),
         "summary_by_location_trusted": summarize_by_location(trusted),
+        "summary_by_target_confidence": summarize_by_target_confidence(predictions),
+        "summary_by_target_confidence_trusted": summarize_by_target_confidence(trusted),
         "trusted_excludes_review_status": sorted(UNTRUSTED_REVIEW_STATUSES),
         "trusted_count": len(trusted),
+        "trusted_high_confidence_count": len(trusted_high),
+        "trusted_medium_plus_confidence_count": len(trusted_medium_plus),
         "excluded_count": len(predictions) - len(trusted),
     }
 
@@ -1062,6 +1179,26 @@ def run_batch(args: argparse.Namespace) -> dict:
             f"\nTrusted summary (excludes {summaries['excluded_count']} untrusted): "
             f"median_error_px={trusted.get('median_error_px', 0):.1f}"
         )
+    high = summaries.get("summary_trusted_high_confidence") or {}
+    if high.get("count"):
+        print(
+            f"Trusted high-confidence targets only: median_error_px={high.get('median_error_px', 0):.1f} "
+            f"n={high.get('count')}"
+        )
+    med_plus = summaries.get("summary_trusted_medium_plus_confidence") or {}
+    if med_plus.get("count"):
+        print(
+            f"Trusted medium+ confidence targets: median_error_px={med_plus.get('median_error_px', 0):.1f} "
+            f"n={med_plus.get('count')}"
+        )
+    by_conf = summaries.get("summary_by_target_confidence_trusted") or {}
+    if by_conf:
+        print("\nTrusted summary by target confidence")
+        for bucket, bucket_summary in by_conf.items():
+            print(
+                f"  {bucket}: median_error_px={bucket_summary['median_error_px']:.1f} "
+                f"n={bucket_summary['count']} weight_sum={bucket_summary.get('weight_sum', 0):.1f}"
+            )
     return {
         "mode": "batch_leave_one_out",
         "method": args.method,
@@ -1098,9 +1235,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--ridge-cv",
-        action=argparse.BooleanOptionalAction,
+        dest="ridge_cv",
+        action="store_true",
         default=True,
         help="Pick ridge alpha by leave-one-out CV on training pitches (default: on).",
+    )
+    parser.add_argument(
+        "--no-ridge-cv",
+        dest="ridge_cv",
+        action="store_false",
+        help="Use fixed --alpha instead of leave-one-out CV.",
     )
     parser.add_argument(
         "--no-ridge-outlier-guard",

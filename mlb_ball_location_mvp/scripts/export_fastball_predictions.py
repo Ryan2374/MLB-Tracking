@@ -27,7 +27,7 @@ from prediction.predict_location import (
 )
 from prediction.predict_location import Prediction, filter_trusted_predictions
 
-EXPORT_SCHEMA_VERSION = 4
+EXPORT_SCHEMA_VERSION = 5
 
 STABILITY_CHAMPION_RUN_ID = "calibrated_velocity_linear_n7"
 ACCURACY_CHAMPION_RUN_ID = "compact_ridge_calibrated_n7"
@@ -341,7 +341,8 @@ def build_export(pred_dir: Path, labels_dir: Path | None = None) -> dict:
             "Use comparison_summary / comparison_summary_trusted, leaderboard, and runs. "
             "Champion roles: accuracy_champion (best median), stability_champion (safest), "
             "early_champion (fewer early points). Trusted metrics exclude "
-            "missing_video_unverified and unreliable_unverified."
+            "missing_video_unverified and unreliable_unverified. Prediction JSON may also "
+            "include summary_by_target_confidence* and summary_trusted_high_confidence."
         ),
         "exported_at": date.today().isoformat(),
         "pitch_count": len(pitch_ids),

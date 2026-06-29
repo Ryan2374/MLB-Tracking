@@ -75,7 +75,8 @@
     "cross_frame": 94,
     "cross_x": 1125.0,
     "cross_y": 503.0,
-    "cross_timestamp_ms": 3468.635
+    "cross_timestamp_ms": 3468.635,
+    "target_source": "nearest_frame_old"
   },
   "pitch_type": "fastball",
   "zone_result": "strike",
@@ -94,5 +95,15 @@
     "sidecar_frame_count": 120,
     "capture_fps_measured": 27.1,
     "frames_in_sync": true
+  },
+  "target_quality": {
+    "target_source": "nearest_frame_old",
+    "confidence": "unknown",
+    "estimated": true,
+    "uncertainty_px": 80.0,
+    "weight": 0.0
+  },
+  "quality": {
+    "crossing_estimated": true
   }
 }

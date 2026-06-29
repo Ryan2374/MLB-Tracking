@@ -103,11 +103,12 @@
     "cross_frame": 40,
     "cross_x": 1171.0,
     "cross_y": 749.0,
-    "cross_timestamp_ms": 1325.322
+    "cross_timestamp_ms": 1325.322,
+    "target_source": "nearest_frame_old"
   },
   "quality": {
     "ball_visible": true,
-    "crossing_estimated": false,
+    "crossing_estimated": true,
     "label_confidence": "high"
   },
   "notes": "",
@@ -124,5 +125,12 @@
     "capture_fps_measured": 58.0,
     "frames_in_sync": true
   },
-  "review_status": "verified"
+  "review_status": "verified",
+  "target_quality": {
+    "target_source": "nearest_frame_old",
+    "confidence": "unknown",
+    "estimated": true,
+    "uncertainty_px": 80.0,
+    "weight": 0.0
+  }
 }

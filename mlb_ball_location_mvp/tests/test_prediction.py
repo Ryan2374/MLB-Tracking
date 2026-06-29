@@ -165,9 +165,17 @@ def test_build_leaderboard() -> None:
 
 
 def test_ridge_model_robust_scaling(tmp_path: Path) -> None:
-    from prediction.predict_location import PitchLabel, Point, Target, fit_ridge_model, predict_ridge_model
+    from prediction.predict_location import (
+        PitchLabel,
+        Point,
+        Target,
+        default_target_quality_obj,
+        fit_ridge_model,
+        predict_ridge_model,
+    )
 
     labels = []
+    tq = default_target_quality_obj()
     for i in range(4):
         early = tuple(
             Point(frame=100 + j, x=400.0 + 10 * j, y=200.0 + 8 * j)
@@ -182,6 +190,7 @@ def test_ridge_model_robust_scaling(tmp_path: Path) -> None:
                 release_frame=100,
                 early_points=early,
                 target=Target(cross_x=500.0 + i, cross_y=260.0 + i, cross_frame=111),
+                target_quality=tq,
             )
         )
     model = fit_ridge_model(labels, n_points=5, alpha=10.0)
@@ -263,7 +272,7 @@ def test_export_champion_roles(tmp_path: Path) -> None:
         (pred_dir / spec["source_file"]).write_text(json.dumps(stub_prediction), encoding="utf-8")
 
     payload = build_export(pred_dir, labels_dir)
-    assert payload["schema_version"] == 4
+    assert payload["schema_version"] == 5
     assert set(payload["champions"]) == set(CHAMPION_ROLES)
     assert payload["champions"]["accuracy_champion"]["run_id"] == "compact_ridge_calibrated_n7"
     assert payload["champions"]["stability_champion"]["run_id"] == "calibrated_velocity_linear_n7"

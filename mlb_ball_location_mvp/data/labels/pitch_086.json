@@ -167,15 +167,16 @@
     }
   ],
   "target": {
-    "cross_frame": 69,
+    "cross_frame": 69.0,
     "cross_x": 927.0,
     "cross_y": 901.0,
-    "cross_timestamp_ms": 2784.181
+    "cross_timestamp_ms": 2784.181,
+    "target_source": "bracket_interpolation"
   },
   "quality": {
     "ball_visible": true,
-    "crossing_estimated": false,
-    "label_confidence": "high"
+    "crossing_estimated": true,
+    "label_confidence": "medium"
   },
   "notes": "",
   "requested_fps": 60.0,
@@ -190,5 +191,27 @@
     "sidecar_frame_count": 243,
     "capture_fps_measured": 57.78,
     "frames_in_sync": true
+  },
+  "target_quality": {
+    "target_source": "bracket_interpolation",
+    "confidence": "medium",
+    "estimated": true,
+    "uncertainty_px": 0.0,
+    "weight": 0.5
+  },
+  "target_bracket": {
+    "before": {
+      "frame": 68,
+      "x": 908.0,
+      "y": 744.0,
+      "timestamp_ms": 2754.824
+    },
+    "after": {
+      "frame": 69,
+      "x": 927.0,
+      "y": 901.0,
+      "timestamp_ms": 2784.181
+    },
+    "alpha": 1.0
   }
 }

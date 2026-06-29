@@ -25,14 +25,27 @@
     {"frame": 109, "x": 480.0, "y": 256.5}
   ],
   "target": {
-    "cross_frame": 110,
-    "cross_x": 500.0,
-    "cross_y": 265.0
+    "cross_frame": 109.5,
+    "cross_x": 490.0,
+    "cross_y": 260.75,
+    "target_source": "bracket_midpoint"
+  },
+  "target_bracket": {
+    "before": {"frame": 109, "x": 480.0, "y": 256.5},
+    "after": {"frame": 110, "x": 500.0, "y": 265.0},
+    "alpha": 0.5
+  },
+  "target_quality": {
+    "target_source": "bracket_midpoint",
+    "confidence": "medium",
+    "estimated": true,
+    "uncertainty_px": 44.5,
+    "weight": 0.5
   },
   "quality": {
     "ball_visible": true,
-    "crossing_estimated": false,
-    "label_confidence": "high"
+    "crossing_estimated": true,
+    "label_confidence": "medium"
   },
   "notes": ""
 }

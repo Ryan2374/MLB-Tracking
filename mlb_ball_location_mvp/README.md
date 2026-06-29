@@ -169,10 +169,15 @@ The prediction script still uses only the first `--n-points 3/5/7` later.
 1. Find frame right before/at release -> press r
 2. First frame with ball free from hand -> press e, click ball center
 3. Click ball center on every visible frame until plate (auto-advances each click)
-4. At crossing frame -> press t, click ball center at strike-zone plane
+4. Target crossing (prefer bracket, not single frame):
+   - 1 = before-crossing frame, click ball
+   - 2 = after-crossing frame, click ball
+   - m = interpolate target (adjust alpha with -/=)
+   - OR 4 = post-pitch game location marker click
+   - OR 3 = single nearest frame (low confidence — last resort)
 5. Set pitch_type ([/]), zone_result (;/'), location_bucket (,.)
-6. m=confidence, b=toggle estimated crossing, i=notes in terminal
-7. Press s to save
+6. l=confidence override, i=notes in terminal
+7. Press s to save (writes target_quality + derived cross_x/cross_y)
 ```
 
 ### Key controls
@@ -182,16 +187,21 @@ n/p or arrows   next / previous frame
 j/k             jump +/- 10 frames
 space           play/pause scrub
 f               jump to next unlabeled ball frame
+0               jump to release_frame
 r               set release_frame
 e               ball-point mode
-t               target-crossing mode
-left click      add point (auto-advances in ball mode)
+t               target review mode (full path)
+1 / 2           bracket before / after crossing click
+3               single-frame target (low confidence)
+4               post-pitch game marker target
+m               derive target from bracket (alpha with -/=)
+-/=             decrease / increase bracket alpha
+left click      add point for current mode
 v               toggle current-frame-only markers (default) vs all frames
 [/]             pitch type
 ;/'             zone result
 ,.              location bucket
-m               label confidence
-b               toggle crossing_estimated
+l               label confidence override
 i               edit notes (terminal prompt)
 s               save
 q               quit
@@ -203,6 +213,7 @@ Consistency rules:
 - `release_frame` is before the first free-flight click.
 - Crossing is plate/zone plane, not catcher glove.
 - Skip frames where the ball is hidden instead of guessing.
+- **Do not treat one captured frame as exact crossing** — bracket before/after when possible.
 
 ## Coordinate calibration (first milestone)
 
@@ -251,23 +262,41 @@ PCI/stick calibration is a separate later step (screen pixel → controller stic
     {"frame": 103, "x": 446.0, "y": 224.0}
   ],
   "target": {
-    "cross_frame": 110,
+    "cross_frame": 109.5,
     "cross_x": 558.0,
-    "cross_y": 412.0
+    "cross_y": 412.0,
+    "target_source": "bracket_midpoint"
   },
-  "pitch_type": "fastball",
-  "zone_result": "strike",
-  "location_bucket": "middle",
+  "target_bracket": {
+    "before": {"frame": 109, "x": 540.0, "y": 398.0},
+    "after": {"frame": 110, "x": 576.0, "y": 426.0},
+    "alpha": 0.5
+  },
+  "target_quality": {
+    "target_source": "bracket_midpoint",
+    "confidence": "medium",
+    "estimated": true,
+    "uncertainty_px": 44.5,
+    "weight": 0.5
+  },
   "quality": {
     "ball_visible": true,
-    "crossing_estimated": false,
-    "label_confidence": "high"
-  }
+    "crossing_estimated": true,
+    "label_confidence": "medium"
+  },
   "notes": ""
 }
 ```
 
 `early_points` holds the **full observed flight path**. Prediction uses only the first N points via `--n-points`.
+
+Legacy single-frame labels can be backfilled:
+
+```bash
+python scripts/backfill_target_quality.py --labels-dir data/labels
+```
+
+Evaluation reports now include trusted summaries by `target_quality.confidence` (high / medium+ tiers).
 
 Optional later fields:
 

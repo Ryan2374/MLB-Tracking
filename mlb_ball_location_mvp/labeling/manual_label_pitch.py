@@ -24,6 +24,12 @@ import cv2
 import numpy as np
 
 from coords.calibration import draw_grid, draw_zone, full_frame_metadata, zone_dict_or_none
+from labeling.target_derivation import (
+    TARGET_SOURCE_NEAREST_FRAME,
+    TARGET_SOURCE_POST_PITCH_MARKER,
+    derive_target_from_bracket,
+    finalize_label_target,
+)
 from timing.sidecar import enrich_label_timing, load_frame_timestamps, verify_video_sidecars
 
 PITCH_TYPES = [
@@ -63,10 +69,12 @@ MOUSE_HUD_H = 26
 
 
 HELP_LINES = [
-    "Workflow: r=release | e=ball points | t=target | s=save | q=quit",
-    "n/p or arrows: next/prev | j/k: +/-10 | space: play/pause | f: next gap",
-    "Metadata: [/]=pitch type | ;/'=zone | ,/.=location | m=confidence | b=est. cross | i=notes",
-    "v: all-frame ball markers (target mode review) | g: grid | z: zone box | u: undo | c: coords | h: help",
+    "Workflow: r=release | e=ball points | t=target review | s=save | q=quit",
+    "n/p or arrows: next/prev | j/k: +/-10 | space: play/pause | f: next gap | 0: jump release",
+    "Target: 3=single frame | 1=before cross | 2=after cross | m=interp | 4=game marker",
+    "Target: -/= adjust bracket alpha | click sets point for current target mode",
+    "Metadata: [/]=pitch type | ;/'=zone | ,/.=location | l=confidence | i=notes",
+    "v: all-frame ball markers (target mode) | g: grid | z: zone | u: undo | c: coords | h: help",
 ]
 
 ARROW_LEFT = {2424832, 81, 2}
@@ -189,6 +197,8 @@ class LabelState:
         self.mouse_x: Optional[int] = None
         self.mouse_y: Optional[int] = None
         self.needs_redraw = True
+        self.target_click_mode = "single"
+        self.bracket_alpha = 0.5
         self.frame_timestamps = load_frame_timestamps(video_path)
         self.data: dict[str, Any] = {
             **full_frame_metadata(frame_width, frame_height),
@@ -206,6 +216,11 @@ class LabelState:
                 "cross_frame": None,
                 "cross_x": None,
                 "cross_y": None,
+            },
+            "target_bracket": {
+                "before": None,
+                "after": None,
+                "alpha": 0.5,
             },
             "quality": default_quality(),
             "notes": "",
@@ -295,6 +310,8 @@ class LabelState:
                 warnings.append("first ball point should be after release_frame")
         if target.get("cross_x") is None or target.get("cross_y") is None:
             warnings.append("target crossing not set")
+        elif str(target.get("target_source") or "") == TARGET_SOURCE_NEAREST_FRAME:
+            warnings.append("single-frame target — prefer bracket (1/2/m) or game marker (4)")
         if target.get("cross_frame") is None:
             warnings.append("target cross_frame is not set")
         missing = self.missing_frame_count()
@@ -334,6 +351,10 @@ class LabelState:
             self.data["quality"] = merged
         if "notes" not in self.data:
             self.data["notes"] = ""
+        if not isinstance(self.data.get("target_bracket"), dict):
+            self.data["target_bracket"] = {"before": None, "after": None, "alpha": 0.5}
+        bracket = self.data["target_bracket"]
+        self.bracket_alpha = float(bracket.get("alpha") or 0.5)
         apply_recording_fps_fields(self.data, self.video_path, container_fps=float(self.data.get("fps") or 0))
         self.frame_timestamps = load_frame_timestamps(self.video_path)
         release = self.data.get("release_frame")
@@ -358,6 +379,8 @@ class LabelState:
             "target",
             {"cross_frame": None, "cross_x": None, "cross_y": None},
         )
+        state.data.setdefault("target_bracket", {"before": None, "after": None, "alpha": 0.5})
+        state.bracket_alpha = float(state.data["target_bracket"].get("alpha") or 0.5)
         state.data.setdefault("notes", "")
         quality = state.data.get("quality")
         if not isinstance(quality, dict):
@@ -372,6 +395,33 @@ class LabelState:
         elif state.data["early_points"]:
             state.frame_idx = int(state.data["early_points"][0]["frame"])
         return state
+
+    def _bracket_point(self, x: int, y: int) -> dict[str, Any]:
+        point: dict[str, Any] = {"frame": int(self.frame_idx), "x": float(x), "y": float(y)}
+        ts_ms = self.frame_timestamp_ms(self.frame_idx)
+        if ts_ms is not None:
+            point["timestamp_ms"] = round(ts_ms, 3)
+        return point
+
+    def apply_bracket_target(self, *, force_midpoint: bool = False) -> None:
+        bracket = self.data.setdefault("target_bracket", {"before": None, "after": None, "alpha": 0.5})
+        bracket["alpha"] = round(float(self.bracket_alpha), 4)
+        try:
+            target, target_quality = derive_target_from_bracket(
+                bracket,
+                alpha=self.bracket_alpha,
+                force_midpoint=force_midpoint,
+            )
+        except ValueError as exc:
+            print(f"Cannot derive bracket target: {exc}")
+            return
+        self.data["target"].update(target)
+        self.data["target_quality"] = target_quality
+        print(
+            f"Target from bracket (alpha={self.bracket_alpha:.2f}): "
+            f"x={target['cross_x']:.1f} y={target['cross_y']:.1f} "
+            f"uncertainty≈{target_quality['uncertainty_px']:.1f}px"
+        )
 
     def add_click(self, x: int, y: int, frame_count: int) -> None:
         if self.mode == "early":
@@ -394,19 +444,44 @@ class LabelState:
             points.sort(key=lambda p: int(p["frame"]))
             if not replaced and self.auto_step > 0 and frame_count > 0:
                 self.frame_idx = min(frame_count - 1, self.frame_idx + self.auto_step)
+        elif self.target_click_mode == "bracket_before":
+            bracket = self.data.setdefault("target_bracket", {"before": None, "after": None, "alpha": 0.5})
+            bracket["before"] = self._bracket_point(x, y)
+            print(f"Bracket before: frame {self.frame_idx} ({x}, {y})")
+        elif self.target_click_mode == "bracket_after":
+            bracket = self.data.setdefault("target_bracket", {"before": None, "after": None, "alpha": 0.5})
+            bracket["after"] = self._bracket_point(x, y)
+            print(f"Bracket after: frame {self.frame_idx} ({x}, {y})")
+        elif self.target_click_mode == "post_pitch_marker":
+            self.data["target"] = {
+                "cross_frame": int(self.frame_idx),
+                "cross_x": float(x),
+                "cross_y": float(y),
+                "target_source": TARGET_SOURCE_POST_PITCH_MARKER,
+            }
+            print(f"Post-pitch marker target: frame {self.frame_idx} ({x}, {y})")
         else:
             self.data["target"] = {
                 "cross_frame": int(self.frame_idx),
                 "cross_x": float(x),
                 "cross_y": float(y),
+                "target_source": TARGET_SOURCE_NEAREST_FRAME,
             }
+            print(f"Single-frame target: frame {self.frame_idx} ({x}, {y}) — prefer bracket (1/2/m) when possible")
 
     def undo(self) -> None:
         if self.mode == "early":
             if self.data["early_points"]:
                 self.data["early_points"].pop()
+        elif self.target_click_mode == "bracket_before":
+            bracket = self.data.get("target_bracket") or {}
+            bracket["before"] = None
+        elif self.target_click_mode == "bracket_after":
+            bracket = self.data.get("target_bracket") or {}
+            bracket["after"] = None
         else:
             self.data["target"] = {"cross_frame": None, "cross_x": None, "cross_y": None}
+            self.data.pop("target_quality", None)
 
     def target_set(self) -> bool:
         target = self.data["target"]
@@ -454,6 +529,15 @@ class LabelState:
                 f"(source={timing.get('source')})"
             )
 
+        finalize_label_target(self.data)
+        tq = self.data.get("target_quality") or {}
+        if tq:
+            print(
+                f"Target quality: source={tq.get('target_source')} "
+                f"confidence={tq.get('confidence')} "
+                f"uncertainty≈{tq.get('uncertainty_px')}px"
+            )
+
         self.out_path.parent.mkdir(parents=True, exist_ok=True)
         with self.out_path.open("w", encoding="utf-8") as f:
             json.dump(self.data, f, indent=2)
@@ -468,14 +552,18 @@ def draw_text(img, text: str, x: int, y: int, scale: float = 0.55, thickness: in
 
 def base_overlay_key(state: LabelState) -> tuple[Any, ...]:
     target = state.data["target"]
+    bracket = state.data.get("target_bracket") or {}
     zone = state.data.get("zone") or {}
     points = state.data["early_points"]
+    tq = state.data.get("target_quality") or {}
     return (
         state.frame_idx,
         state.show_grid,
         state.show_zone,
         state.show_help,
         state.mode,
+        state.target_click_mode,
+        state.bracket_alpha,
         state.data.get("release_frame"),
         state.show_all_points,
         tuple(sorted(state.frame_timestamps.items())[:3]),  # cache bust if sidecar reloads
@@ -483,6 +571,10 @@ def base_overlay_key(state: LabelState) -> tuple[Any, ...]:
         target.get("cross_frame"),
         target.get("cross_x"),
         target.get("cross_y"),
+        str(bracket.get("before")),
+        str(bracket.get("after")),
+        tq.get("target_source"),
+        tq.get("confidence"),
         tuple(sorted(zone.items())),
     )
 
@@ -534,10 +626,21 @@ def render_base_overlay(frame, state: LabelState):
         cv2.drawMarker(img, (tx, ty), (0, 0, 255), markerType=cv2.MARKER_CROSS, markerSize=24, thickness=2)
         draw_text(img, "target", tx + 10, ty - 10, scale=0.5)
 
-    mode_label = "ball-point" if state.mode == "early" else "target-crossing"
+    bracket = state.data.get("target_bracket") or {}
+    for label, key, color in (("before", "before", (255, 128, 0)), ("after", "after", (255, 0, 128))):
+        pt = bracket.get(key)
+        if isinstance(pt, dict) and pt.get("x") is not None and pt.get("y") is not None:
+            bx, by = int(round(pt["x"])), int(round(pt["y"]))
+            show_pt = state.show_all_points or int(pt.get("frame", -1)) == state.frame_idx
+            if show_pt:
+                cv2.circle(img, (bx, by), 8, color, 2)
+                draw_text(img, label, bx + 8, by - 8, scale=0.45)
+
+    mode_label = "ball-point" if state.mode == "early" else f"target ({state.target_click_mode})"
     target_status = "set" if state.target_set() else "not set"
     missing = state.missing_frame_count()
     quality = state.data.get("quality", {})
+    target_quality = state.data.get("target_quality") or {}
     current_ts = state.frame_timestamp_s(state.frame_idx)
     release = state.data.get("release_frame")
     release_ts_line = ""
@@ -568,9 +671,12 @@ def render_base_overlay(frame, state: LabelState):
         f"Target: {target_status}",
         f"release_frame: {release}",
         f"cross_frame: {target_frame}",
+        f"target_mode: {state.target_click_mode}  alpha: {state.bracket_alpha:.2f}",
+        f"target_source: {target_quality.get('target_source') or target.get('target_source') or 'n/a'}",
+        f"target_confidence: {target_quality.get('confidence') or quality.get('label_confidence')}",
+        f"uncertainty_px: {target_quality.get('uncertainty_px', 'n/a')}",
         f"fps: {state.data.get('fps')} (container {state.data.get('container_fps', 'n/a')})",
         f"type={state.data.get('pitch_type')} zone={state.data.get('zone_result')} loc={state.data.get('location_bucket')}",
-        f"confidence={quality.get('label_confidence')} est_cross={quality.get('crossing_estimated')}",
     ]
     if missing > 0:
         top.append(f"Missing ball frames before crossing: {missing}")
@@ -699,6 +805,34 @@ def handle_key(
     elif key == ord("t"):
         state.mode = "target"
         state.show_all_points = True
+    elif key == ord("1"):
+        state.mode = "target"
+        state.target_click_mode = "bracket_before"
+        print("Target mode: bracket BEFORE crossing (click ball on current frame)")
+    elif key == ord("2"):
+        state.mode = "target"
+        state.target_click_mode = "bracket_after"
+        print("Target mode: bracket AFTER crossing (click ball on current frame)")
+    elif key == ord("3"):
+        state.mode = "target"
+        state.target_click_mode = "single"
+        print("Target mode: single nearest frame (low confidence — use only if no after-frame)")
+    elif key == ord("4"):
+        state.mode = "target"
+        state.target_click_mode = "post_pitch_marker"
+        print("Target mode: post-pitch game location marker")
+    elif key == ord("m"):
+        state.apply_bracket_target()
+    elif key == ord("-") or key == ord("_"):
+        state.bracket_alpha = max(0.0, round(state.bracket_alpha - 0.05, 4))
+        bracket = state.data.setdefault("target_bracket", {"before": None, "after": None, "alpha": 0.5})
+        bracket["alpha"] = state.bracket_alpha
+        print(f"Bracket alpha: {state.bracket_alpha:.2f}")
+    elif key == ord("=") or key == ord("+"):
+        state.bracket_alpha = min(1.0, round(state.bracket_alpha + 0.05, 4))
+        bracket = state.data.setdefault("target_bracket", {"before": None, "after": None, "alpha": 0.5})
+        bracket["alpha"] = state.bracket_alpha
+        print(f"Bracket alpha: {state.bracket_alpha:.2f}")
     elif key == ord("u"):
         state.undo()
     elif key == ord("g"):
@@ -718,7 +852,7 @@ def handle_key(
         state.show_help = not state.show_help
     elif key == ord(" "):
         playing = not playing
-    elif key == ord("a"):
+    elif key == ord("0"):
         release = state.data.get("release_frame")
         if release is not None:
             state.frame_idx = clamp_frame(int(release), frame_count)
@@ -742,14 +876,12 @@ def handle_key(
         state.data["location_bucket"] = cycle_option(
             LOCATION_BUCKETS, str(state.data.get("location_bucket", "unknown")), 1
         )
-    elif key == ord("m"):
+    elif key == ord("l"):
         quality = state.data.setdefault("quality", default_quality())
         quality["label_confidence"] = cycle_option(
             LABEL_CONFIDENCE, str(quality.get("label_confidence", "high")), 1
         )
-    elif key == ord("b"):
-        quality = state.data.setdefault("quality", default_quality())
-        quality["crossing_estimated"] = not bool(quality.get("crossing_estimated"))
+        print(f"Label confidence: {quality['label_confidence']}")
     elif key == ord("i"):
         print("Enter notes (blank to clear). Check this terminal:")
         try:
