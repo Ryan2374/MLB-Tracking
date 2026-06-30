@@ -317,9 +317,33 @@ Optional later fields:
 
 ## Step 4: Evaluate labeled pitches
 
-`--labels data/labels` loads real pitch JSON files only — it **ignores** `example_*.json` (schema sample lives in `data/examples/`).
+`--labels data/labels` loads **`pitch_*.json` only** — it ignores `example_*.json`, `eval_*.json`, `synthetic_*.json`, and anything under `data/labels/synthetic/`. Schema samples live in `data/examples/`.
 
-Once you have at least a few labels, sweep how early you can predict:
+### Full evaluation sweep (all models)
+
+To run every model in `prediction/model_specs.py`, write per-model JSONs, and compile `Fastball predictions.json` + `.html`, use either PowerShell or Python directly. New models belong in `model_specs.py` only; the orchestrator picks them up automatically.
+
+```powershell
+.\run_full_eval.ps1
+```
+
+Or:
+
+```powershell
+python scripts/run_all_models.py
+```
+
+Outputs land in `data/predictions/` (including a timestamped `full_eval_*.log`). Expect **100 pitches** after synthetic labels are excluded.
+
+**Standalone `.exe` (optional):** install PyInstaller, edit `eval_config.json` with your `project_dir`, then:
+
+```powershell
+.\scripts\build_eval_exe.ps1
+```
+
+Run `dist\MLB_FullEval\MLB_FullEval.exe` from any terminal. You can also set `MLB_EVAL_PROJECT_DIR` instead of editing the config.
+
+For a manual single-model run:
 
 ```bash
 python prediction/predict_location.py --labels data/labels --n-points 3 --method velocity --out data/predictions/eval_n3.json

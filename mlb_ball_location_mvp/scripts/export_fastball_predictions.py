@@ -25,13 +25,15 @@ from prediction.predict_location import (
     summarize,
     summarize_by_location,
 )
+from prediction.model_specs import (
+    ACCURACY_CHAMPION_RUN_ID,
+    EARLY_CHAMPION_RUN_ID,
+    STABILITY_CHAMPION_RUN_ID,
+    export_specs,
+)
 from prediction.predict_location import Prediction, filter_trusted_predictions
 
 EXPORT_SCHEMA_VERSION = 5
-
-STABILITY_CHAMPION_RUN_ID = "calibrated_velocity_linear_n7"
-ACCURACY_CHAMPION_RUN_ID = "compact_ridge_calibrated_n7"
-EARLY_CHAMPION_RUN_ID = "compact_ridge_calibrated_n5"
 
 # Backward-compatible alias used to mark the stability run in console output.
 CHAMPION_RUN_ID = STABILITY_CHAMPION_RUN_ID
@@ -59,102 +61,6 @@ CHAMPION_ROLES: dict[str, dict] = {
         "purpose": "Best balance when fewer early ball points are available.",
     },
 }
-
-RUN_SPECS: list[dict] = [
-    {
-        "run_id": "velocity_n3",
-        "source_file": "eval_n3.json",
-        "method": "velocity",
-        "n_points": 3,
-        "poly_degree": 1,
-        "calibration": None,
-    },
-    {
-        "run_id": "velocity_n5",
-        "source_file": "fastball_velocity_n5.json",
-        "method": "velocity",
-        "n_points": 5,
-        "poly_degree": 1,
-        "calibration": None,
-    },
-    {
-        "run_id": "velocity_n7",
-        "source_file": "fastball_velocity_n7.json",
-        "method": "velocity",
-        "n_points": 7,
-        "poly_degree": 1,
-        "calibration": None,
-    },
-    {
-        "run_id": "ridge_n5",
-        "source_file": "fastball_ridge_n5.json",
-        "method": "ridge",
-        "n_points": 5,
-        "poly_degree": 1,
-        "calibration": None,
-    },
-    {
-        "run_id": "ridge_n7",
-        "source_file": "fastball_ridge_n7.json",
-        "method": "ridge",
-        "n_points": 7,
-        "poly_degree": 1,
-        "calibration": None,
-    },
-    {
-        "run_id": "calibrated_velocity_median_n7",
-        "source_file": "fastball_calib_median_n7.json",
-        "method": "calibrated_velocity",
-        "n_points": 7,
-        "poly_degree": 1,
-        "calibration": "median",
-    },
-    {
-        "run_id": CHAMPION_RUN_ID,
-        "source_file": "fastball_calib_linear_n7.json",
-        "method": "calibrated_velocity",
-        "n_points": 7,
-        "poly_degree": 1,
-        "calibration": "linear",
-    },
-    {
-        "run_id": "calibrated_velocity_linear_n5",
-        "source_file": "fastball_calib_linear_n5.json",
-        "method": "calibrated_velocity",
-        "n_points": 5,
-        "poly_degree": 1,
-        "calibration": "linear",
-        "optional": True,
-    },
-    {
-        "run_id": "calibrated_velocity_linear_n3",
-        "source_file": "fastball_calib_linear_n3.json",
-        "method": "calibrated_velocity",
-        "n_points": 3,
-        "poly_degree": 1,
-        "calibration": "linear",
-        "optional": True,
-    },
-    {
-        "run_id": "compact_ridge_calibrated_n5",
-        "source_file": "fastball_compact_ridge_n5.json",
-        "method": "compact_ridge_calibrated",
-        "n_points": 5,
-        "poly_degree": 1,
-        "calibration": None,
-        "optional": True,
-    },
-    {
-        "run_id": "compact_ridge_calibrated_n7",
-        "source_file": "fastball_compact_ridge_n7.json",
-        "method": "compact_ridge_calibrated",
-        "n_points": 7,
-        "poly_degree": 1,
-        "calibration": None,
-        "optional": True,
-    },
-]
-
 
 def load_run(pred_dir: Path, spec: dict) -> dict:
     path = pred_dir / spec["source_file"]
@@ -268,7 +174,7 @@ def pitch_ids_from_runs(runs: list[dict]) -> list[str]:
 def load_runs(pred_dir: Path) -> tuple[list[dict], list[str]]:
     runs: list[dict] = []
     skipped: list[str] = []
-    for spec in RUN_SPECS:
+    for spec in export_specs():
         try:
             runs.append(load_run(pred_dir, spec))
         except FileNotFoundError as exc:

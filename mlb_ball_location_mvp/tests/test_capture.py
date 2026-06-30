@@ -18,6 +18,17 @@ def test_iter_label_paths_ignores_example_files(tmp_path: Path) -> None:
     assert [p.name for p in paths] == ["pitch_001.json"]
 
 
+def test_iter_label_paths_excludes_synthetic_subfolder(tmp_path: Path) -> None:
+    labels_dir = tmp_path / "labels"
+    synthetic_dir = labels_dir / "synthetic"
+    synthetic_dir.mkdir(parents=True)
+    (labels_dir / "pitch_001.json").write_text("{}", encoding="utf-8")
+    (synthetic_dir / "pitch_099.json").write_text("{}", encoding="utf-8")
+
+    paths = iter_label_paths(labels_dir)
+    assert [p.name for p in paths] == ["pitch_001.json"]
+
+
 def test_sync_sidecars_to_encoded_trims_extra() -> None:
     from capture.record_clip import sync_sidecars_to_encoded
 
